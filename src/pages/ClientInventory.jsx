@@ -89,6 +89,29 @@ export default function ClientInventory() {
     window.open(`http://localhost:3002/api/reports/export-csv?client_id=${id}&token=${token}`, '_blank');
   };
 
+  const handleDownloadAgent = async () => {
+    const toastId = toast.loading(`Gerando agente para ${client.name}...`);
+    try {
+      const response = await api.get(`/clients/${id}/agent-package`, {
+        responseType: 'blob'
+      });
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      const fileName = `Agente_Goldtech_${client.name.replace(/\s+/g, '_')}.zip`;
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      
+      toast.success('Agente gerado com sucesso!', { id: toastId });
+    } catch (err) {
+      toast.error('Erro ao gerar pacote do agente', { id: toastId });
+    }
+  };
+
   if (!client && !loading) return <div className="p-20 text-center">Cliente não encontrado.</div>;
 
   return (
@@ -109,6 +132,9 @@ export default function ClientInventory() {
           <p style={{ color: 'var(--text-light)', fontWeight: 600, fontSize: '0.9rem' }}>Inventário Detalhado • CNPJ {client?.cnpj}</p>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
+          <button onClick={handleDownloadAgent} className="btn-outline-premium" style={{ height: '42px', padding: '0 1rem', borderColor: 'var(--primary-gold)', color: 'var(--primary-gold)' }}>
+            <Download size={16} /> Gerar Agente
+          </button>
           <button onClick={handleExport} className="btn-outline-premium" style={{ height: '42px', padding: '0 1rem' }}>
             <Download size={16} /> Exportar
           </button>

@@ -1,5 +1,5 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, Package, FileText, Settings, LogOut, ShieldCheck, User } from 'lucide-react';
+import { LayoutDashboard, Users, Package, FileText, Settings, LogOut, ShieldCheck, User, UserCog } from 'lucide-react';
 
 export default function Sidebar() {
   const navigate = useNavigate();
@@ -17,6 +17,7 @@ export default function Sidebar() {
     { name: 'Clientes', path: '/clientes', icon: Users },
     { name: 'Inventário Geral', path: '/equipamentos', icon: Package },
     { name: 'Monitoramento', path: '/relatorios', icon: FileText },
+    { name: 'Usuários', path: '/usuarios', icon: UserCog },
     { name: 'Configurações', path: '/configuracoes', icon: Settings },
   ];
 

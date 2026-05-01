@@ -108,6 +108,34 @@ try {
     toast.success(`Script gerado para ${clientName}`);
   };
 
+  const handleDownloadFullAgent = async () => {
+    if (!scriptClientId) {
+      toast.error('Selecione um cliente para gerar o pacote');
+      return;
+    }
+    const client = clients.find(c => String(c.id) === String(scriptClientId));
+    const toastId = toast.loading(`Gerando pacote completo para ${client.name}...`);
+    try {
+      const response = await api.get(`/clients/${scriptClientId}/agent-package`, {
+        responseType: 'blob'
+      });
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      const fileName = `Agente_Goldtech_${client.name.replace(/\s+/g, '_')}.zip`;
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      
+      toast.success('Pacote gerado com sucesso!', { id: toastId });
+    } catch (err) {
+      toast.error('Erro ao gerar pacote', { id: toastId });
+    }
+  };
+
   const copyScript = () => {
     if (!generatedScript) return;
     navigator.clipboard.writeText(generatedScript);
@@ -207,7 +235,7 @@ try {
             <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border-glass)' }}>
               <p style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>Endpoint para configuração dos scripts de coleta.</p>
               <div style={{ display: 'flex', gap: '10px', marginBottom: '1.5rem' }}>
-                <input type="text" readOnly className="form-control-premium" value="http://localhost:3002/api/agent/inventory" style={{ fontFamily: 'monospace', fontSize: '0.8rem' }} />
+                <input type="text" readOnly className="form-control-premium" value="https://goldtech-api.onrender.com/api/agent/inventory" style={{ fontFamily: 'monospace', fontSize: '0.8rem' }} />
                 <button onClick={copyEndpoint} className="btn-outline-premium" style={{ width: '56px', padding: 0 }}><Copy size={18} /></button>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent-emerald)' }}>
@@ -218,11 +246,11 @@ try {
             </div>
           </div>
 
-          {/* Sessão 4: Gerar Script por Cliente [NOVO] */}
+          {/* Sessão 4: Gerar Pacote por Cliente */}
           <div className="glass-panel" style={{ padding: '2.5rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '2.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '1.5rem' }}>
               <Terminal size={22} color="var(--primary-gold)" />
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff' }}>Gerar Script por Cliente</h2>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff' }}>Gerar Pacote do Agente</h2>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -238,21 +266,14 @@ try {
                 </select>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label style={{ fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', color: 'var(--text-light)' }}>Token do Agente</label>
-                <input 
-                  type="text" 
-                  className="form-control-premium" 
-                  value={scriptToken} 
-                  onChange={e => setScriptToken(e.target.value)}
-                  placeholder="Insira o AGENT_TOKEN do .env"
-                  style={{ fontFamily: 'monospace' }}
-                />
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button onClick={generateScript} className="btn-outline-premium" style={{ flex: 1, height: '48px', fontSize: '0.85rem' }}>
+                  <FileCode size={18} /> Visualizar Script
+                </button>
+                <button onClick={handleDownloadFullAgent} className="btn-premium" style={{ flex: 1, height: '48px', fontSize: '0.85rem' }}>
+                  <Download size={18} /> Baixar Pacote Completo (ZIP)
+                </button>
               </div>
-
-              <button onClick={generateScript} className="btn-premium" style={{ height: '48px' }}>
-                <FileCode size={18} /> Gerar Script PowerShell
-              </button>
 
               {generatedScript && (
                 <>
@@ -296,3 +317,4 @@ try {
     </div>
   );
 }
+

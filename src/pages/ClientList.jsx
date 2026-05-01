@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import api from '../services/api';
-import { Search, Plus, Users, ChevronRight, Building2, Mail, Phone, Package, MoreVertical, PowerOff, Power, Trash2, AlertTriangle } from 'lucide-react';
+import { Search, Plus, Users, ChevronRight, Building2, Mail, Phone, Package, MoreVertical, PowerOff, Power, Trash2, AlertTriangle, Download } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 
@@ -36,6 +36,30 @@ export default function ClientList() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  const handleDownloadAgent = async (client) => {
+    setMenuOpenId(null);
+    const toastId = toast.loading(`Gerando agente para ${client.name}...`);
+    try {
+      const response = await api.get(`/clients/${client.id}/agent-package`, {
+        responseType: 'blob'
+      });
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      const fileName = `Agente_Goldtech_${client.name.replace(/\s+/g, '_')}.zip`;
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      
+      toast.success('Agente gerado com sucesso!', { id: toastId });
+    } catch (err) {
+      toast.error('Erro ao gerar pacote do agente', { id: toastId });
+    }
+  };
 
   const handleSetStatus = async (client, newStatus) => {
     setMenuOpenId(null);
@@ -152,12 +176,20 @@ export default function ClientList() {
                           style={{ position: 'absolute', right: 0, top: '110%', background: 'var(--bg-card)', border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '6px', zIndex: 50, minWidth: '180px', boxShadow: '0 8px 32px rgba(0,0,0,0.5)', backdropFilter: 'blur(20px)' }}
                         >
                           {client.status === 'Ativo' ? (
-                            <button
-                              onClick={() => handleSetStatus(client, 'Inativo')}
-                              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: 'none', border: 'none', color: '#f59e0b', cursor: 'pointer', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 700 }}
-                            >
-                              <PowerOff size={15} /> Desativar Cliente
-                            </button>
+                            <>
+                              <button
+                                onClick={() => handleDownloadAgent(client)}
+                                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: 'none', border: 'none', color: 'var(--primary-gold)', cursor: 'pointer', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 700 }}
+                              >
+                                <Download size={15} /> Gerar Agente
+                              </button>
+                              <button
+                                onClick={() => handleSetStatus(client, 'Inativo')}
+                                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: 'none', border: 'none', color: '#f59e0b', cursor: 'pointer', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 700 }}
+                              >
+                                <PowerOff size={15} /> Desativar Cliente
+                              </button>
+                            </>
                           ) : (
                             <button
                               onClick={() => handleSetStatus(client, 'Ativo')}
