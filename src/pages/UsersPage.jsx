@@ -74,7 +74,7 @@ export default function UsersPage() {
   const [formEdit, setFormEdit]     = useState({ name: '', email: '', role: 'user' });
   const [formPwd, setFormPwd]       = useState({ current_password: '', new_password: '', confirm_password: '' });
 
-  const currentUser = JSON.parse(localStorage.getItem('goldtech_user') || '{}');
+  const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
   const isAdmin = currentUser.role === 'admin';
 
   const fetchUsers = async () => {
@@ -123,7 +123,7 @@ export default function UsersPage() {
   };
 
   /* ── Alterar senha ── */
-  const openPwd = (user) => {
+  const openPwd = (user = currentUser) => {
     setFormPwd({ current_password: '', new_password: '', confirm_password: '' });
     setModalPwd(user); // null = própria senha
   };
@@ -134,11 +134,18 @@ export default function UsersPage() {
       return toast.error('A nova senha e a confirmação não coincidem.');
     }
     try {
-      await api.put('/users/change-password', {
-        current_password: formPwd.current_password,
-        new_password: formPwd.new_password,
-      });
-      toast.success('Senha alterada com sucesso!');
+      const changingOwnPassword = modalPwd?.id === currentUser?.id;
+      if (changingOwnPassword) {
+        await api.put('/users/change-password', {
+          current_password: formPwd.current_password,
+          new_password: formPwd.new_password,
+        });
+      } else {
+        await api.put(`/users/${modalPwd.id}/password`, {
+          new_password: formPwd.new_password,
+        });
+      }
+      toast.success(changingOwnPassword ? 'Senha alterada com sucesso!' : 'Senha redefinida com sucesso!');
       setModalPwd(null);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Erro ao alterar senha');
@@ -236,13 +243,15 @@ export default function UsersPage() {
                   <td><RoleBadge role={user?.role} /></td>
                   <td>
                     <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                      <button
-                        onClick={() => openPwd(user)}
-                        title="Alterar senha"
-                        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '6px 10px', color: 'var(--text-light)', cursor: 'pointer' }}
-                      >
-                        <KeyRound size={14} />
-                      </button>
+                      {(isAdmin || user?.id === currentUser?.id) && (
+                        <button
+                          onClick={() => openPwd(user)}
+                          title={user?.id === currentUser?.id ? 'Alterar minha senha' : 'Redefinir senha'}
+                          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '6px 10px', color: 'var(--text-light)', cursor: 'pointer' }}
+                        >
+                          <KeyRound size={14} />
+                        </button>
+                      )}
                       {isAdmin && (
                         <>
                           <button
@@ -334,7 +343,9 @@ export default function UsersPage() {
             Alterando senha de: <strong style={{ color: '#fff' }}>{modalPwd.name}</strong>
           </p>
           <form onSubmit={handlePwd} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            <PasswordField label="Senha Atual" value={formPwd.current_password} onChange={e => setFormPwd({ ...formPwd, current_password: e.target.value })} placeholder="Sua senha atual" />
+            {modalPwd?.id === currentUser?.id && (
+              <PasswordField label="Senha Atual" value={formPwd.current_password} onChange={e => setFormPwd({ ...formPwd, current_password: e.target.value })} placeholder="Sua senha atual" />
+            )}
             <PasswordField label="Nova Senha" value={formPwd.new_password} onChange={e => setFormPwd({ ...formPwd, new_password: e.target.value })} placeholder="Mínimo 6 caracteres" />
             <PasswordField label="Confirmar Nova Senha" value={formPwd.confirm_password} onChange={e => setFormPwd({ ...formPwd, confirm_password: e.target.value })} placeholder="Repita a nova senha" />
             <div style={{ display: 'flex', gap: '12px', marginTop: '0.5rem' }}>
