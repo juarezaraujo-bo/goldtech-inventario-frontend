@@ -9,16 +9,16 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const { data } = await api.get('/equipments/stats');
-        setStats(data);
+        const response = await api.get('/equipments/stats');
+        setStats(response.data || { total: 0, active: 0, maintenance: 0, retired: 0 });
       } catch (err) {
         console.error('Erro ao buscar estatísticas');
       }
     };
     const fetchMonitoring = async () => {
       try {
-        const { data } = await api.get('/monitoring/summary');
-        setMonitoring(data.summary);
+        const response = await api.get('/monitoring/summary');
+        setMonitoring(response.data?.summary || null);
       } catch (err) {
         console.error('Erro ao buscar monitoramento');
       }
@@ -28,10 +28,10 @@ export default function Dashboard() {
   }, []);
 
   const cards = [
-    { title: 'Total de Ativos', value: stats.total, icon: Package, color: 'var(--primary-gold)' },
-    { title: 'Em Operação', value: stats.active, icon: CheckCircle, color: 'var(--accent-emerald)' },
-    { title: 'Em Manutenção', value: stats.maintenance, icon: AlertTriangle, color: 'var(--accent-orange)' },
-    { title: 'Desativados', value: stats.retired, icon: XCircle, color: 'var(--accent-red)' },
+    { title: 'Total de Ativos', value: stats?.total ?? 0, icon: Package, color: 'var(--primary-gold)' },
+    { title: 'Em Operação', value: stats?.active ?? 0, icon: CheckCircle, color: 'var(--accent-emerald)' },
+    { title: 'Em Manutenção', value: stats?.maintenance ?? 0, icon: AlertTriangle, color: 'var(--accent-orange)' },
+    { title: 'Desativados', value: stats?.retired ?? 0, icon: XCircle, color: 'var(--accent-red)' },
   ];
 
   return (

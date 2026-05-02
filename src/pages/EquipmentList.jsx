@@ -23,12 +23,8 @@ export default function EquipmentList() {
   const fetchEquipments = async () => {
     setLoading(true);
     try {
-      const params = {};
-      if (search) params.search = search;
-      if (statusFilter) params.status = statusFilter;
-      
-      const { data } = await api.get('/equipments', { params });
-      setEquipments(data);
+      const response = await api.get('/equipments', { params });
+      setEquipments(response.data || []);
     } catch (err) {
       toast.error('Erro ao carregar equipamentos');
     } finally {
@@ -166,20 +162,20 @@ export default function EquipmentList() {
           <tbody>
             {loading ? (
               <tr><td colSpan="6" style={{ textAlign: 'center', padding: '4rem' }}>Carregando inventário...</td></tr>
-            ) : equipments.map((item) => (
+            ) : (Array.isArray(equipments) ? equipments : []).map((item) => (
               <tr key={item.id}>
                 <td>
                   <div 
                     onClick={() => { setSelectedAsset(item); setModalView('details'); }} 
                     style={{ fontWeight: 800, color: 'var(--primary-gold)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
                   >
-                    {item.nome} <ExternalLink size={12} opacity={0.5} />
+                    {item?.nome || 'Equipamento sem nome'} <ExternalLink size={12} opacity={0.5} />
                   </div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-light)' }}>SN: {item.numero_serie || 'N/A'}</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-light)' }}>SN: {item?.numero_serie || 'N/A'}</div>
                 </td>
                 <td>
-                  <div style={{ fontWeight: 700, color: '#fff', fontSize: '0.9rem' }}>{item.processador || 'N/A'}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>{item.memoria_ram} / {item.sistema_operacional}</div>
+                  <div style={{ fontWeight: 700, color: '#fff', fontSize: '0.9rem' }}>{item?.processador || 'N/A'}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>{item?.memoria_ram || 'N/A'} / {item?.sistema_operacional || 'N/A'}</div>
                 </td>
                 <td>{getCategoryBadge(item.categoria)}</td>
                 <td>
@@ -188,8 +184,8 @@ export default function EquipmentList() {
                   </span>
                 </td>
                 <td>
-                  <div style={{ fontWeight: 700, color: '#fff' }}>{item.client_name || '-'}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>{item.localizacao || 'Sem local'}</div>
+                  <div style={{ fontWeight: 700, color: '#fff' }}>{item?.client_name || '-'}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>{item?.localizacao || 'Sem local'}</div>
                 </td>
                 <td className="text-right" style={{ overflow: 'visible' }}>
                   <div style={{ position: 'relative', display: 'flex', justifyContent: 'flex-end' }}>

@@ -79,8 +79,8 @@ export default function UsersPage() {
 
   const fetchUsers = async () => {
     try {
-      const { data } = await api.get('/users');
-      setUsers(data);
+      const response = await api.get('/users');
+      setUsers(response.data || []);
     } catch {
       toast.error('Erro ao carregar usuários');
     } finally {
@@ -202,7 +202,7 @@ export default function UsersPage() {
             Contas de Acesso
           </h3>
           <span style={{ marginLeft: 'auto', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-light)' }}>
-            {users.length} usuário(s)
+            {(users || []).length} usuário(s)
           </span>
         </div>
 
@@ -219,21 +219,21 @@ export default function UsersPage() {
               </tr>
             </thead>
             <tbody>
-              {users.map(user => (
+              {(Array.isArray(users) ? users : []).map(user => (
                 <tr key={user.id}>
                   <td style={{ fontWeight: 700, color: '#fff' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(212,175,55,0.1)', color: 'var(--primary-gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         <User size={15} />
                       </div>
-                      {user.name}
-                      {user.id === currentUser.id && (
+                      {user?.name || 'Sem nome'}
+                      {user?.id === currentUser?.id && (
                         <span style={{ fontSize: '0.65rem', color: 'var(--accent-emerald)', fontWeight: 800 }}>(você)</span>
                       )}
                     </div>
                   </td>
-                  <td style={{ color: 'var(--text-light)', fontFamily: 'monospace', fontSize: '0.85rem' }}>{user.email}</td>
-                  <td><RoleBadge role={user.role} /></td>
+                  <td style={{ color: 'var(--text-light)', fontFamily: 'monospace', fontSize: '0.85rem' }}>{user?.email || 'Sem e-mail'}</td>
+                  <td><RoleBadge role={user?.role} /></td>
                   <td>
                     <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                       <button
@@ -252,7 +252,7 @@ export default function UsersPage() {
                           >
                             <Edit2 size={14} />
                           </button>
-                          {user.id !== currentUser.id && (
+                          {user?.id !== currentUser?.id && (
                             <button
                               onClick={() => handleDelete(user)}
                               title="Excluir"

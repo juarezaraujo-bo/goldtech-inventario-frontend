@@ -17,8 +17,8 @@ export default function ClientList() {
   const fetchClients = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/clients');
-      setClients(data);
+      const response = await api.get('/clients');
+      setClients(response.data || []);
     } catch (err) {
       toast.error('Erro ao carregar clientes');
     } finally {
@@ -90,14 +90,16 @@ export default function ClientList() {
     }
   };
 
-  const filteredClients = clients.filter(c => {
-    const matchSearch = c.name.toLowerCase().includes(search.toLowerCase()) ||
-      (c.cnpj && c.cnpj.includes(search));
-    const matchStatus = showInactive ? true : c.status !== 'Inativo';
+  const safeClients = Array.isArray(clients) ? clients : [];
+
+  const filteredClients = safeClients.filter(c => {
+    const matchSearch = (c?.name || '').toLowerCase().includes(search.toLowerCase()) ||
+      (c?.cnpj && c.cnpj.includes(search));
+    const matchStatus = showInactive ? true : c?.status !== 'Inativo';
     return matchSearch && matchStatus;
   });
 
-  const inactiveCount = clients.filter(c => c.status === 'Inativo').length;
+  const inactiveCount = safeClients.filter(c => c?.status === 'Inativo').length;
 
   return (
     <div className="animate-fade">
@@ -151,7 +153,7 @@ export default function ClientList() {
             <div
               key={client.id}
               className="client-card"
-              style={{ opacity: client.status === 'Inativo' ? 0.6 : 1 }}
+              style={{ opacity: client?.status === 'Inativo' ? 0.6 : 1 }}
             >
               <div className="client-card-body" onClick={() => navigate(`/clientes/${client.id}/inventario`)}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
@@ -211,15 +213,15 @@ export default function ClientList() {
                   </div>
                 </div>
 
-                <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#fff', marginBottom: '0.25rem' }}>{client.name}</h3>
-                <p style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-light)', marginBottom: '4px' }}>CNPJ: {client.cnpj || 'Não informado'}</p>
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#fff', marginBottom: '0.25rem' }}>{client?.name || 'Sem nome'}</h3>
+                <p style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-light)', marginBottom: '4px' }}>CNPJ: {client?.cnpj || 'Não informado'}</p>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: 'var(--text-light)' }}>
-                    <Mail size={12} /> {client.email || 'Sem e-mail'}
+                    <Mail size={12} /> {client?.email || 'Sem e-mail'}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: 'var(--text-light)' }}>
-                    <Phone size={12} /> {client.phone || 'Sem telefone'}
+                    <Phone size={12} /> {client?.phone || 'Sem telefone'}
                   </div>
                 </div>
               </div>
