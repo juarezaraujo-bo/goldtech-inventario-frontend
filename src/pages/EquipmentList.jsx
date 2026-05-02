@@ -66,7 +66,8 @@ export default function EquipmentList() {
   }, [menuOpen]);
 
   const handleExport = () => {
-    window.open(`http://localhost:3002/api/equipments/export?token=${localStorage.getItem('goldtech_token')}`, '_blank');
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002';
+    window.open(`${API_URL}/api/equipments/export?token=${localStorage.getItem('token')}`, '_blank');
   };
 
   const handleDelete = async (id) => {

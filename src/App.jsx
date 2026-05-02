@@ -13,7 +13,7 @@ import Settings from './pages/Settings';
 import UsersPage from './pages/UsersPage';
 
 const PrivateRoute = ({ children }) => {
-  const token = localStorage.getItem('goldtech_token');
+  const token = localStorage.getItem('token');
   return token ? (
     <div className="app-layout">
       <Sidebar />

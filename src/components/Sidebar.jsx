@@ -4,11 +4,11 @@ import { LayoutDashboard, Users, Package, FileText, Settings, LogOut, ShieldChec
 export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
-  const user = JSON.parse(localStorage.getItem('goldtech_user') || '{}');
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
 
   const handleLogout = () => {
-    localStorage.removeItem('goldtech_token');
-    localStorage.removeItem('goldtech_user');
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
     navigate('/login');
   };
 

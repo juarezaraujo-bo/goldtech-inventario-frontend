@@ -85,8 +85,9 @@ export default function ClientInventory() {
   };
 
   const handleExport = () => {
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002';
     const token = localStorage.getItem('goldtech_token');
-    window.open(`http://localhost:3002/api/reports/export-csv?client_id=${id}&token=${token}`, '_blank');
+    window.open(`${API_URL}/api/reports/export-csv?client_id=${id}&token=${token}`, '_blank');
   };
 
   const handleDownloadAgent = async () => {

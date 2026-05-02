@@ -41,7 +41,8 @@ export default function Settings() {
   };
 
   const copyEndpoint = () => {
-    navigator.clipboard.writeText('http://localhost:3002/api/agent/inventory');
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002';
+    navigator.clipboard.writeText(`${API_URL}/api/agent/inventory`);
     toast.success('Endpoint copiado para a área de transferência');
   };
 
@@ -54,13 +55,14 @@ export default function Settings() {
       return;
     }
 
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002';
     const script = `# ==========================================
 # Goldtech Inventario - Agente de Coleta v2.0
 # Cliente: ${clientName}
 # Gerado em: ${new Date().toLocaleString('pt-BR')}
 # ==========================================
 
-$ApiUrl = "http://localhost:3002/api/agent/inventory"
+$ApiUrl = "${API_URL}/api/agent/inventory"
 $AgentToken = "${scriptToken}"
 $Cliente = "${clientName}"
 
@@ -235,7 +237,13 @@ try {
             <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border-glass)' }}>
               <p style={{ color: 'var(--text-light)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>Endpoint para configuração dos scripts de coleta.</p>
               <div style={{ display: 'flex', gap: '10px', marginBottom: '1.5rem' }}>
-                <input type="text" readOnly className="form-control-premium" value="https://goldtech-api.onrender.com/api/agent/inventory" style={{ fontFamily: 'monospace', fontSize: '0.8rem' }} />
+                <input 
+                  type="text" 
+                  readOnly 
+                  className="form-control-premium" 
+                  value={`${import.meta.env.VITE_API_URL || 'http://localhost:3002'}/api/agent/inventory`} 
+                  style={{ fontFamily: 'monospace', fontSize: '0.8rem' }} 
+                />
                 <button onClick={copyEndpoint} className="btn-outline-premium" style={{ width: '56px', padding: 0 }}><Copy size={18} /></button>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent-emerald)' }}>

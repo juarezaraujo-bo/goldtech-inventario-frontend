@@ -17,8 +17,11 @@ export default function Login() {
     setLoading(true);
     try {
       const { data } = await api.post('/auth/login', { email, password });
-      localStorage.setItem('goldtech_token', data.accessToken);
-      localStorage.setItem('goldtech_user', JSON.stringify(data));
+      
+      // Salva apenas o JWT real
+      localStorage.setItem('token', data.token);
+      // Salva o objeto user separado
+      localStorage.setItem('user', JSON.stringify(data.user));
       toast.success('Acesso autorizado! Bem-vindo ao Inventário.');
       navigate('/');
     } catch (err) {
