@@ -4,6 +4,7 @@ export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002';
 
 const api = axios.create({
   baseURL: `${API_URL}/api`,
+  timeout: 15000,
 });
 
 api.interceptors.request.use((config) => {
@@ -28,6 +29,13 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (error.code === 'ECONNABORTED') {
+      error.response = {
+        status: 503,
+        data: { message: 'Servidor demorou para responder. Tente novamente em instantes.' },
+      };
+    }
+
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
