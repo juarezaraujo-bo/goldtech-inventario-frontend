@@ -17,6 +17,7 @@ export default function Login() {
     setLoading(true);
     try {
       const { data } = await api.post('/login', { username, password });
+      console.log('Resposta login:', data);
 
       // Salva apenas o JWT real
       localStorage.setItem('token', data.token);
@@ -25,6 +26,7 @@ export default function Login() {
       toast.success('Acesso autorizado! Bem-vindo ao Inventário.');
       navigate('/');
     } catch (err) {
+      console.log('Erro login:', err);
       toast.error(err.response?.data?.message || 'Falha na autenticação');
     } finally {
       setLoading(false);
