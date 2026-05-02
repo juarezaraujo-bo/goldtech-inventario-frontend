@@ -7,7 +7,7 @@ import bgLogin from '../assets/bg-login.png';
 import logoGoldtech from '../assets/logo-goldtech.png';
 
 export default function Login() {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -16,7 +16,7 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
-      const { data } = await api.post('/login', { email, password });
+      const { data } = await api.post('/login', { username, password });
 
       // Salva apenas o JWT real
       localStorage.setItem('token', data.token);
@@ -132,16 +132,16 @@ export default function Login() {
 
             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <label style={{ fontSize: '13px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 800, color: 'rgba(255,255,255,0.4)', marginLeft: '4px' }}>E-mail</label>
+                <label style={{ fontSize: '13px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 800, color: 'rgba(255,255,255,0.4)', marginLeft: '4px' }}>Usuário</label>
                 <div style={{ position: 'relative' }}>
                   <Mail size={20} style={{ position: 'absolute', left: '18px', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.3)', pointerEvents: 'none' }} />
                   <input
-                    type="email"
+                    type="text"
                     className="form-control-premium"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
                     required
-                    placeholder="seu@email.com"
+                    placeholder="Digite seu usuário"
                     style={{ paddingLeft: '56px' }}
                   />
                 </div>
