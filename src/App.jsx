@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
@@ -28,7 +28,7 @@ const PrivateRoute = ({ children }) => {
 
 function App() {
   return (
-    <Router>
+    <HashRouter>
       <Toaster position="top-right" />
       <Routes>
         <Route path="/login" element={<Login />} />
@@ -50,7 +50,7 @@ function App() {
         <Route path="/configuracoes" element={<PrivateRoute><Settings /></PrivateRoute>} />
         <Route path="/usuarios" element={<PrivateRoute><UsersPage /></PrivateRoute>} />
       </Routes>
-    </Router>
+    </HashRouter>
   );
 }
 
