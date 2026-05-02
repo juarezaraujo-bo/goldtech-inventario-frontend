@@ -23,6 +23,10 @@ export default function EquipmentList() {
   const fetchEquipments = async () => {
     setLoading(true);
     try {
+      const params = {};
+      if (search.trim()) params.search = search.trim();
+      if (statusFilter) params.status = statusFilter;
+
       const response = await api.get('/equipments', { params });
       setEquipments(response.data || []);
     } catch (err) {
