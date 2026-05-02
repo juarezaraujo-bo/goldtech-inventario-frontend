@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import api from '../services/api';
+import api, { API_URL } from '../services/api';
 import { 
   Search, Plus, Download, Edit2, Trash2, Filter, 
   MoreVertical, Package, ExternalLink, Move, LayoutGrid, 
@@ -66,7 +66,6 @@ export default function EquipmentList() {
   }, [menuOpen]);
 
   const handleExport = () => {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002';
     window.open(`${API_URL}/api/equipments/export?token=${localStorage.getItem('token')}`, '_blank');
   };
 

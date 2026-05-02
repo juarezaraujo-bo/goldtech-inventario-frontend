@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api from '../services/api';
+import api, { API_URL } from '../services/api';
 import { 
   Package, Search, Plus, Download, Edit2, Trash2, 
   ChevronLeft, LayoutGrid, Monitor, Laptop, Server, Router, 
@@ -85,8 +85,7 @@ export default function ClientInventory() {
   };
 
   const handleExport = () => {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002';
-    const token = localStorage.getItem('goldtech_token');
+    const token = localStorage.getItem('token');
     window.open(`${API_URL}/api/reports/export-csv?client_id=${id}&token=${token}`, '_blank');
   };
 

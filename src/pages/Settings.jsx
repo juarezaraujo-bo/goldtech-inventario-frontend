@@ -4,7 +4,7 @@ import {
   Cpu, Globe, Save, Copy, FileCode, Terminal, ChevronDown,
   Download, Users, AlertTriangle
 } from 'lucide-react';
-import api from '../services/api';
+import api, { API_URL } from '../services/api';
 import toast from 'react-hot-toast';
 
 export default function Settings() {
@@ -41,7 +41,6 @@ export default function Settings() {
   };
 
   const copyEndpoint = () => {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002';
     navigator.clipboard.writeText(`${API_URL}/api/agent/inventory`);
     toast.success('Endpoint copiado para a área de transferência');
   };
@@ -55,7 +54,6 @@ export default function Settings() {
       return;
     }
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002';
     const script = `# ==========================================
 # Goldtech Inventario - Agente de Coleta v2.0
 # Cliente: ${clientName}
@@ -241,7 +239,7 @@ try {
                   type="text" 
                   readOnly 
                   className="form-control-premium" 
-                  value={`${import.meta.env.VITE_API_URL || 'http://localhost:3002'}/api/agent/inventory`} 
+                  value={`${API_URL}/api/agent/inventory`} 
                   style={{ fontFamily: 'monospace', fontSize: '0.8rem' }} 
                 />
                 <button onClick={copyEndpoint} className="btn-outline-premium" style={{ width: '56px', padding: 0 }}><Copy size={18} /></button>
