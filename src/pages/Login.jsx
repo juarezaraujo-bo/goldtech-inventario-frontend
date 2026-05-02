@@ -16,8 +16,8 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
-      const { data } = await api.post('/auth/login', { email, password });
-      
+      const { data } = await api.post('/login', { email, password });
+
       // Salva apenas o JWT real
       localStorage.setItem('token', data.token);
       // Salva o objeto user separado
