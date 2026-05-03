@@ -12,6 +12,7 @@ import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import UsersPage from './pages/UsersPage';
 import Intranet from './pages/Intranet';
+import KnowledgeBase from './pages/KnowledgeBase';
 
 const PrivateRoute = ({ children }) => {
   const token = localStorage.getItem('token');
@@ -48,6 +49,7 @@ function App() {
         
         {/* Relatórios e Configurações */}
         <Route path="/intranet" element={<PrivateRoute><Intranet /></PrivateRoute>} />
+        <Route path="/conhecimento" element={<PrivateRoute><KnowledgeBase /></PrivateRoute>} />
         <Route path="/relatorios" element={<PrivateRoute><Reports /></PrivateRoute>} />
         <Route path="/configuracoes" element={<PrivateRoute><Settings /></PrivateRoute>} />
         <Route path="/usuarios" element={<PrivateRoute><UsersPage /></PrivateRoute>} />
