@@ -9,12 +9,20 @@ const INTEL_GEN_YEARS = {
 export function detectIntelGeneration(cpuName) {
   if (!cpuName) return null;
   const cpu = cpuName.toLowerCase();
-  const match = cpu.match(/i[3579]-(\d{4,5})/);
+
+  const genLabelMatch = cpu.match(/\b(\d{1,2})(?:st|nd|rd|th)\s+gen\b/);
+  if (genLabelMatch) return parseInt(genLabelMatch[1], 10);
+
+  const match = cpu.match(/i[3579][-\s](\d{4,5})/);
   if (!match) return null;
   const modelNumber = match[1];
-  return modelNumber.length === 5
-    ? parseInt(modelNumber.substring(0, 2), 10)
-    : parseInt(modelNumber.substring(0, 1), 10);
+  const twoDigitGeneration = parseInt(modelNumber.substring(0, 2), 10);
+
+  if (modelNumber.length === 5 || (modelNumber.length === 4 && twoDigitGeneration >= 10 && twoDigitGeneration <= 15)) {
+    return twoDigitGeneration;
+  }
+
+  return parseInt(modelNumber.substring(0, 1), 10);
 }
 
 export function getCpuEstimatedYear(cpuName) {
