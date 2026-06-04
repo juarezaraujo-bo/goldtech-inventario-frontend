@@ -1,0 +1,20 @@
+[
+  {
+    "id": "RULE-001",
+    "name": "Processo Sensível Não Autorizado",
+    "description": "Detecta a execução de processos marcados como sensíveis ou potencialmente perigosos.",
+    "severity": "high"
+  },
+  {
+    "id": "RULE-002",
+    "name": "Conexão de Rede Incomum",
+    "description": "Detecta conexões de rede em portas não listadas na allowlist.",
+    "severity": "medium"
+  },
+  {
+    "id": "RULE-003",
+    "name": "Modificação de Chave de Registro de Inicialização",
+    "description": "Detecta tentativas de persistência através de chaves de registro autorun.",
+    "severity": "high"
+  }
+]

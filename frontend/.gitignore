@@ -7,29 +7,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Dependencies
 node_modules
-frontend/node_modules
-backend/node_modules
-
-# Build
 dist
-frontend/dist
-backend/dist
 dist-ssr
-
-# Environment
-.env
-.env.local
-frontend/.env
-frontend/.env.local
-backend/.env
-backend/.env.local
-
-# Database
-*.sqlite
-*.sqlite3
-*.db
+*.local
 
 # Editor directories and files
 .vscode/*
@@ -41,3 +22,6 @@ backend/.env.local
 *.njsproj
 *.sln
 *.sw?
+
+.env
+.env.local

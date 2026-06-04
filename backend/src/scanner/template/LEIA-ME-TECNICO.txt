@@ -1,0 +1,13 @@
+LEIA-ME TÉCNICO - INSTRUÇÕES DO DIAGNÓSTICO DE SEGURANÇA
+
+Este pacote contém os scripts necessários para auditar o comportamento da rede local e processos em execução.
+
+Arquivos inclusos:
+- Goldtech-BehaviorCollector.ps1: Coleta dados de portas abertas, conexões e processos ativos.
+- Goldtech-AnalyzeBaseline.ps1: Analisa os dados coletados com base nas regras de risco e allowlist definidas no config.json.
+- Start-GoldtechScan.ps1: Orquestrador da execução dos scripts PowerShell.
+- Executar-Diagnostico.bat: Atalho em lote para rodar o scanner com privilégios elevados.
+- risk-rules.json: Conjunto padrão de regras de segurança utilizadas pela análise de risco.
+- config.json: Arquivo gerado dinamicamente no download contendo os dados do cliente e as definições de segurança parametrizadas.
+
+Em caso de dúvidas técnicas, consulte o time de desenvolvimento ou suporte Goldtech.
