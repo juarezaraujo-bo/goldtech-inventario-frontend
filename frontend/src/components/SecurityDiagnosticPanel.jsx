@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Download, Eye, FileJson, Loader, Package, RefreshCw, Save, Settings, Trash2, Upload, X } from 'lucide-react';
+import { AlertTriangle, BarChart3, Download, Eye, FileJson, Loader, Package, RefreshCw, Save, Settings, Trash2, Upload, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../services/api';
 
@@ -124,6 +124,40 @@ function getRiskStyle(riskLevel) {
   return { color: 'var(--text-light)', border: '1px solid var(--border-glass)', background: 'rgba(255,255,255,0.04)' };
 }
 
+function getAnalysisValue(analysis, names, fallback = '-') {
+  for (const name of names) {
+    if (analysis?.[name] !== undefined && analysis?.[name] !== null && analysis?.[name] !== '') {
+      return analysis[name];
+    }
+  }
+  return fallback;
+}
+
+function formatRiskLabel(value) {
+  if (value === undefined || value === null || value === '' || value === '-') return '-';
+  return String(value).toUpperCase();
+}
+
+function looksLikePath(value) {
+  const text = String(value || '').trim();
+  return Boolean(text) && (
+    /^[a-zA-Z]:[\\/]/.test(text) ||
+    text.startsWith('\\\\') ||
+    text.startsWith('/') ||
+    text.includes('\\') ||
+    text.includes('/')
+  );
+}
+
+function getProcessPath(processItem) {
+  const value = processItem?.path || processItem?.Path;
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!value || normalized === 'processes' || normalized === 'connections') {
+    return 'Não informado';
+  }
+  return value;
+}
+
 export default function SecurityDiagnosticPanel({ clientId, clientName }) {
   const [config, setConfig] = useState(defaultConfig);
   const [allowlistText, setAllowlistText] = useState('');
@@ -132,6 +166,8 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
   const [results, setResults] = useState([]);
   const [resultFile, setResultFile] = useState(null);
   const [selectedResult, setSelectedResult] = useState(null);
+  const [selectedAnalysis, setSelectedAnalysis] = useState(null);
+  const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingPackages, setLoadingPackages] = useState(false);
   const [loadingResults, setLoadingResults] = useState(false);
@@ -139,6 +175,7 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
   const [generating, setGenerating] = useState(false);
   const [uploadingResult, setUploadingResult] = useState(false);
   const [viewingResultId, setViewingResultId] = useState(null);
+  const [analyzingResultId, setAnalyzingResultId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
   const [downloadingResultId, setDownloadingResultId] = useState(null);
@@ -352,6 +389,19 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
       toast.error(err.response?.data?.message || 'Erro ao carregar detalhes do resultado.');
     } finally {
       setViewingResultId(null);
+    }
+  };
+
+  const handleAnalyzeResult = async (resultId) => {
+    setAnalyzingResultId(resultId);
+    try {
+      const { data } = await api.get(`/clients/${clientId}/security-diagnostic/results/${resultId}/analysis`);
+      setSelectedAnalysis(data);
+      setIsAnalysisModalOpen(true);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Erro ao carregar analise do resultado.');
+    } finally {
+      setAnalyzingResultId(null);
     }
   };
 
@@ -700,6 +750,15 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
                       <td>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
                           <button
+                            onClick={() => handleAnalyzeResult(resultId)}
+                            disabled={analyzingResultId === resultId}
+                            title="Analisar resultado"
+                            style={{ ...actionButtonStyle, color: 'var(--accent-emerald)' }}
+                          >
+                            {analyzingResultId === resultId ? <Loader className="animate-spin" size={16} /> : <BarChart3 size={16} />}
+                            Analisar
+                          </button>
+                          <button
                             onClick={() => handleViewResult(result)}
                             disabled={viewingResultId === resultId}
                             title="Visualizar resultado"
@@ -838,6 +897,211 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
               >
                 {formatJson(selectedResult.summary)}
               </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isAnalysisModalOpen && selectedAnalysis && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.78)',
+            zIndex: 1250,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '24px',
+            backdropFilter: 'blur(4px)'
+          }}
+        >
+          <div
+            className="glass-panel animate-scale"
+            style={{
+              width: '100%',
+              maxWidth: '1080px',
+              maxHeight: '92vh',
+              overflowY: 'auto',
+              padding: '2rem'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.5rem' }}>
+              <div style={{ color: 'var(--accent-emerald)', background: 'rgba(16,185,129,0.1)', padding: '8px', borderRadius: '10px' }}>
+                <BarChart3 size={20} />
+              </div>
+              <div>
+                <h3 style={{ color: '#fff', fontSize: '1.15rem', fontWeight: 800, margin: 0 }}>Analise do Diagnostico</h3>
+                <p style={{ color: 'var(--text-light)', margin: '4px 0 0', fontSize: '0.82rem' }}>
+                  Pontos de atencao para validacao tecnica. Esta analise nao confirma infeccao, invasao ou malware.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setIsAnalysisModalOpen(false);
+                  setSelectedAnalysis(null);
+                }}
+                title="Fechar"
+                style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: 'var(--text-light)', cursor: 'pointer' }}
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px', marginBottom: '1.5rem' }}>
+              {[
+                ['Host', selectedAnalysis.hostName],
+                ['Versao do scanner', selectedAnalysis.scannerVersion],
+                ['Data da coleta', formatDate(selectedAnalysis.collectedAt)],
+                ['Nivel de risco', getAnalysisValue(selectedAnalysis, ['riskLevel', 'risk_level'])],
+                ['Score', getAnalysisValue(selectedAnalysis, ['riskScore', 'risk_score'])],
+              ].map(([label, value]) => (
+                <div key={label} style={{ border: '1px solid var(--border-glass)', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', padding: '1rem' }}>
+                  <div style={{ ...labelStyle, marginBottom: '8px' }}>{label}</div>
+                  {label === 'Nivel de risco' ? (
+                    <span className="status-badge" style={getRiskStyle(value)}>
+                      {formatRiskLabel(value)}
+                    </span>
+                  ) : (
+                    <div style={{ color: '#fff', fontWeight: 700, overflowWrap: 'anywhere' }}>{value ?? '-'}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {selectedAnalysis.analysisSource === 'diagnostic-summary' && (
+              <div style={{ border: '1px solid rgba(245,158,11,0.25)', background: 'rgba(245,158,11,0.06)', borderRadius: '14px', padding: '1rem', marginBottom: '1.5rem' }}>
+                <p style={{ color: 'var(--text-light)', lineHeight: 1.7, margin: 0 }}>
+                  Este arquivo contém um resumo de diagnóstico. Para análise técnica detalhada de conexões, processos e conexões externas,
+                  envie também o resultado-coleta.json.
+                </p>
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '1.5rem' }}>
+              {[
+                ['Conexoes', selectedAnalysis.summary?.connectionsCount],
+                ['Processos', selectedAnalysis.summary?.processesCount],
+                ['Portas em escuta', selectedAnalysis.summary?.listeningPortsCount],
+                ['Conexoes externas', selectedAnalysis.summary?.externalConnectionsCount],
+                ['Processos sensiveis', selectedAnalysis.summary?.sensitiveProcessesCount],
+                ['Portas de atencao', selectedAnalysis.summary?.attentionPortsCount],
+              ].map(([label, value]) => (
+                <div key={label} style={{ border: '1px solid var(--border-glass)', borderRadius: '12px', background: 'rgba(0,0,0,0.18)', padding: '1rem' }}>
+                  <div style={{ color: '#fff', fontSize: '1.4rem', fontWeight: 900 }}>{value ?? 0}</div>
+                  <div style={{ color: 'var(--text-light)', fontSize: '0.78rem', marginTop: '4px' }}>{label}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'grid', gap: '1.5rem' }}>
+              <section>
+                <h4 style={{ color: '#fff', fontWeight: 800, margin: '0 0 12px' }}>Resumo Executivo</h4>
+                <ul style={{ color: 'var(--text-light)', lineHeight: 1.7, margin: 0, paddingLeft: '1.2rem' }}>
+                  {(selectedAnalysis.executiveSummary || []).map((item, index) => (
+                    <li key={`${item}-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </section>
+
+              <section>
+                <h4 style={{ color: '#fff', fontWeight: 800, margin: '0 0 12px' }}>Portas que exigem atencao</h4>
+                {(selectedAnalysis.attentionPorts || []).length === 0 ? (
+                  <p style={{ color: 'var(--text-light)', margin: 0 }}>Nenhuma porta de atencao identificada neste diagnostico.</p>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="table-enterprise">
+                      <thead>
+                        <tr>
+                          <th>Porta</th>
+                          <th>Processo</th>
+                          <th>Endereco local</th>
+                          <th>Motivo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedAnalysis.attentionPorts.map((portItem, index) => (
+                          <tr key={`${portItem.port}-${index}`}>
+                            <td>{portItem.port ?? '-'}</td>
+                            <td>{portItem.process || '-'}</td>
+                            <td>{portItem.localAddress || '-'}</td>
+                            <td>Ponto de atencao que requer validacao tecnica.</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h4 style={{ color: '#fff', fontWeight: 800, margin: '0 0 12px' }}>Processos sensiveis encontrados</h4>
+                {(selectedAnalysis.sensitiveProcesses || []).length === 0 ? (
+                  <p style={{ color: 'var(--text-light)', margin: 0 }}>Nenhum processo sensivel identificado neste diagnostico.</p>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="table-enterprise">
+                      <thead>
+                        <tr>
+                          <th>Nome</th>
+                          <th>PID</th>
+                          <th>Caminho</th>
+                          <th>Motivo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedAnalysis.sensitiveProcesses.map((processItem, index) => (
+                          <tr key={`${processItem.name}-${index}`}>
+                            <td>{processItem.name || '-'}</td>
+                            <td>{processItem.pid ?? '-'}</td>
+                            <td>{getProcessPath(processItem)}</td>
+                            <td>Processo administrativo ou sensivel que requer validacao tecnica.</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h4 style={{ color: '#fff', fontWeight: 800, margin: '0 0 12px' }}>Conexoes externas em destaque</h4>
+                {(selectedAnalysis.externalConnections || []).length === 0 ? (
+                  <p style={{ color: 'var(--text-light)', margin: 0 }}>Nenhuma conexao externa relevante identificada neste diagnostico.</p>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="table-enterprise">
+                      <thead>
+                        <tr>
+                          <th>Processo</th>
+                          <th>Endereco remoto</th>
+                          <th>Porta remota</th>
+                          <th>Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedAnalysis.externalConnections.map((connection, index) => (
+                          <tr key={`${connection.remoteAddress}-${connection.remotePort}-${index}`}>
+                            <td>{connection.process || '-'}</td>
+                            <td>{connection.remoteAddress || '-'}</td>
+                            <td>{connection.remotePort ?? '-'}</td>
+                            <td>{connection.state || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h4 style={{ color: '#fff', fontWeight: 800, margin: '0 0 12px' }}>Observacoes tecnicas</h4>
+                <ul style={{ color: 'var(--text-light)', lineHeight: 1.7, margin: 0, paddingLeft: '1.2rem' }}>
+                  {(selectedAnalysis.technicalNotes || []).map((item, index) => (
+                    <li key={`${item}-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </section>
             </div>
           </div>
         </div>

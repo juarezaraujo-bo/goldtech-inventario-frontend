@@ -474,6 +474,31 @@ router.get('/clients/:clientId/security-diagnostic/results', checkClientExists, 
 });
 
 /**
+ * GET /api/clients/:clientId/security-diagnostic/results/:resultId/analysis
+ * Gera uma analise simples e segura do resultado enviado.
+ */
+router.get('/clients/:clientId/security-diagnostic/results/:resultId/analysis', checkClientExists, async (req, res) => {
+  const { resultId } = req.params;
+  try {
+    const result = await queryGet('SELECT * FROM scanner_diagnostic_results WHERE id = ? AND client_id = ?', [resultId, req.client.id]);
+    if (!result) {
+      return res.status(404).json({ message: 'Resultado nao encontrado.' });
+    }
+
+    const absolutePath = path.resolve(result.file_path);
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ message: 'Arquivo fisico do resultado nao encontrado no servidor.' });
+    }
+
+    const analysis = scannerResultService.analyzeScannerResult(result);
+    return res.json(analysis);
+  } catch (error) {
+    console.error('Erro ao analisar resultado do scanner:', error);
+    return res.status(500).json({ message: 'Erro interno ao analisar resultado.' });
+  }
+});
+
+/**
  * GET /api/clients/:clientId/security-diagnostic/results/:resultId
  * Retorna detalhes de um resultado enviado manualmente.
  */

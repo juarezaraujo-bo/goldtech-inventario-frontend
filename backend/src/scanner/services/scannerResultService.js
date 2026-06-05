@@ -3,6 +3,26 @@ const path = require('path');
 const crypto = require('crypto');
 
 const MAX_SUMMARY_FINDINGS = 20;
+const ATTENTION_PORTS = new Set([21, 22, 23, 25, 53, 80, 135, 139, 445, 1433, 3306, 3389, 5432, 5900, 5985, 5986, 8080]);
+const SENSITIVE_PROCESS_TERMS = [
+  'powershell',
+  'cmd',
+  'wscript',
+  'cscript',
+  'mshta',
+  'rundll32',
+  'regsvr32',
+  'psexec',
+  'nmap',
+  'netcat',
+  'nc',
+  'mimikatz',
+  'anydesk',
+  'teamviewer',
+  'rustdesk',
+  'openvpn',
+  'wireguard'
+];
 
 function getProjectRoot() {
   return path.resolve(__dirname, '../../../');
@@ -197,6 +217,345 @@ function getArrayLength(value) {
   return Array.isArray(value) ? value.length : null;
 }
 
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function firstNumber(...values) {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  }
+  return null;
+}
+
+function pickNumber(source, keys) {
+  for (const key of keys) {
+    const value = getValue(source, key);
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+  }
+  return null;
+}
+
+function normalizeProcessName(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^.*[\\/]/, '')
+    .replace(/\.(exe|bat|cmd|ps1|psm1|vbs|js)$/i, '')
+    .toLowerCase();
+}
+
+function isSensitiveProcessName(processName) {
+  const normalized = normalizeProcessName(processName);
+  if (!normalized) return false;
+
+  return SENSITIVE_PROCESS_TERMS.some((term) => {
+    if (term === 'nc') {
+      return normalized === 'nc' || normalized === 'nc.exe';
+    }
+    return normalized.includes(term);
+  });
+}
+
+function pickProcessPath(item) {
+  const value = pickString(item, ['Path', 'path']);
+  if (!value) return null;
+
+  const normalized = value.toLowerCase();
+  if (normalized === 'processes' || normalized === 'connections') {
+    return null;
+  }
+
+  return value;
+}
+
+function getPortValue(item) {
+  return pickNumber(item, ['Port', 'port', 'LocalPort', 'localPort']);
+}
+
+function isPrivateOrLocalRemoteAddress(address) {
+  const value = String(address || '').trim();
+  if (!value || value === '0.0.0.0' || value === '::' || value === '::1' || value === '127.0.0.1') {
+    return true;
+  }
+
+  if (value.startsWith('127.')) return true;
+  if (value.includes(':')) return false;
+
+  const parts = value.split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+
+  const [first, second] = parts;
+  if (first === 10) return true;
+  if (first === 172 && second >= 16 && second <= 31) return true;
+  if (first === 192 && second === 168) return true;
+  if (first === 169 && second === 254) return true;
+
+  return false;
+}
+
+function buildAttentionPorts(listeningPorts) {
+  const unique = new Map();
+
+  asArray(listeningPorts).forEach((item) => {
+    const port = getPortValue(item);
+    if (!port || !ATTENTION_PORTS.has(port)) return;
+
+    const processName = pickString(item, ['Process', 'process', 'Name', 'name']);
+    const key = `${port}:${processName || ''}`;
+    if (!unique.has(key)) {
+      unique.set(key, {
+        port,
+        process: processName,
+        protocol: pickString(item, ['Protocol', 'protocol']),
+        localAddress: pickString(item, ['LocalAddress', 'localAddress', 'local_address'])
+      });
+    }
+  });
+
+  return Array.from(unique.values()).slice(0, 20);
+}
+
+function buildSensitiveProcesses(processes, connections) {
+  const unique = new Map();
+
+  asArray(processes).forEach((processItem) => {
+    const name = pickString(processItem, ['Name', 'name', 'ProcessName', 'processName', 'Process', 'process']);
+    if (!isSensitiveProcessName(name)) return;
+
+    const key = normalizeProcessName(name);
+    if (!unique.has(key)) {
+      unique.set(key, {
+        name,
+        pid: pickNumber(processItem, ['PID', 'Pid', 'pid', 'Id', 'id']),
+        path: pickProcessPath(processItem),
+        source: 'processes',
+        reason: 'Processo administrativo ou sensivel que requer validacao tecnica.'
+      });
+    }
+  });
+
+  asArray(connections).forEach((connection) => {
+    const name = pickString(connection, ['Process', 'process', 'ProcessName', 'processName', 'OwningProcessName']);
+    if (!isSensitiveProcessName(name)) return;
+
+    const key = normalizeProcessName(name);
+    if (!unique.has(key)) {
+      unique.set(key, {
+        name,
+        pid: pickNumber(connection, ['PID', 'Pid', 'pid', 'OwningProcess', 'owningProcess']),
+        path: pickProcessPath(connection),
+        source: 'connections',
+        reason: 'Processo administrativo ou sensivel observado em conexao de rede.'
+      });
+    }
+  });
+
+  return Array.from(unique.values()).slice(0, 20);
+}
+
+function buildExternalConnections(connections) {
+  return asArray(connections)
+    .filter((connection) => {
+      const remoteAddress = pickString(connection, ['RemoteAddress', 'remoteAddress', 'remote_address']);
+      return !isPrivateOrLocalRemoteAddress(remoteAddress);
+    })
+    .slice(0, 30)
+    .map((connection) => ({
+      remoteAddress: pickString(connection, ['RemoteAddress', 'remoteAddress', 'remote_address']),
+      remotePort: pickNumber(connection, ['RemotePort', 'remotePort', 'remote_port']),
+      localAddress: pickString(connection, ['LocalAddress', 'localAddress', 'local_address']),
+      localPort: pickNumber(connection, ['LocalPort', 'localPort', 'local_port']),
+      state: pickString(connection, ['State', 'state']),
+      process: pickString(connection, ['Process', 'process', 'ProcessName', 'processName', 'OwningProcessName'])
+    }));
+}
+
+function getRawConnections(data) {
+  return asArray(data.connections);
+}
+
+function getRawProcesses(data) {
+  return asArray(data.processes);
+}
+
+function getRawListeningPorts(data) {
+  return Array.isArray(data.listening_ports) ? data.listening_ports : asArray(data.listeningPorts);
+}
+
+function hasRawCollectionData(data) {
+  return Array.isArray(data.connections) || Array.isArray(data.processes) ||
+    Array.isArray(data.listening_ports) || Array.isArray(data.listeningPorts);
+}
+
+function countFindingsByRule(findings, ruleIds) {
+  const allowedRules = new Set(ruleIds);
+  return asArray(findings).filter((finding) => allowedRules.has(pickString(finding, ['rule_id', 'ruleId', 'id']))).length;
+}
+
+function buildAttentionPortsFromFindings(findings) {
+  const unique = new Map();
+
+  asArray(findings).forEach((finding) => {
+    const evidence = finding?.evidence || {};
+    const port = getPortValue(evidence);
+    if (!port || !ATTENTION_PORTS.has(port)) return;
+
+    const key = `${port}:${pickString(evidence, ['Process', 'process', 'Name', 'name']) || ''}`;
+    if (!unique.has(key)) {
+      unique.set(key, {
+        port,
+        process: pickString(evidence, ['Process', 'process', 'Name', 'name']),
+        protocol: pickString(evidence, ['Protocol', 'protocol']),
+        localAddress: pickString(evidence, ['LocalAddress', 'localAddress', 'local_address']),
+        source: 'findings',
+        reason: pickString(finding, ['description', 'summary', 'title'])
+      });
+    }
+  });
+
+  return Array.from(unique.values()).slice(0, 20);
+}
+
+function buildSummaryCounts(data, derived) {
+  const findings = asArray(data.findings);
+  const summary = data.summary || {};
+  const counts = data.counts || {};
+  const sensitiveProcessFindingsCount = countFindingsByRule(findings, ['RULE-003']);
+
+  const connectionsCount = firstNumber(
+    getArrayLength(data.connections),
+    summary.connectionsCount,
+    summary.connections_count,
+    counts.connections,
+    0
+  );
+
+  const processesCount = firstNumber(
+    getArrayLength(data.processes),
+    summary.processesCount,
+    summary.processes_count,
+    counts.processes,
+    0
+  );
+
+  const listeningPortsCount = firstNumber(
+    getArrayLength(data.listening_ports),
+    getArrayLength(data.listeningPorts),
+    summary.listeningPortsCount,
+    summary.listening_ports_count,
+    counts.listening_ports,
+    counts.listeningPorts,
+    0
+  );
+
+  return {
+    connectionsCount,
+    processesCount,
+    listeningPortsCount,
+    externalConnectionsCount: firstNumber(
+      derived.externalConnections.length,
+      summary.externalConnectionsCount,
+      summary.external_connections_count,
+      counts.external_connections,
+      counts.externalConnections,
+      0
+    ),
+    sensitiveProcessesCount: firstNumber(
+      derived.sensitiveProcesses.length,
+      summary.sensitiveProcessesCount,
+      summary.sensitive_processes_count,
+      counts.sensitive_processes,
+      counts.sensitiveProcesses,
+      sensitiveProcessFindingsCount,
+      0
+    ),
+    attentionPortsCount: firstNumber(
+      summary.attentionPortsCount,
+      summary.attention_ports_count,
+      counts.attention_ports,
+      counts.attentionPorts,
+      derived.attentionPorts.length,
+      0
+    ),
+    findingsCount: firstNumber(
+      getArrayLength(data.findings),
+      data.total_findings,
+      data.totalFindings,
+      summary.totalFindings,
+      summary.total_findings,
+      counts.findings,
+      0
+    )
+  };
+}
+
+function buildExecutiveSummary({ attentionPorts, sensitiveProcesses, externalConnections }) {
+  const summary = [];
+
+  if (attentionPorts.length > 0) {
+    summary.push('Foram identificadas portas em escuta que devem ser validadas tecnicamente.');
+  }
+  if (sensitiveProcesses.length > 0) {
+    summary.push('Foram encontrados processos administrativos ou sensíveis em execução.');
+  }
+  if (externalConnections.length > 0) {
+    summary.push('Há conexões externas ativas que devem ser revisadas conforme o perfil de uso da máquina.');
+  }
+  if (summary.length === 0) {
+    summary.push('Não foram destacados pontos de atenção básicos a partir das regras simples desta análise.');
+  }
+
+  summary.push('Este diagnóstico indica pontos de atenção, mas não confirma infecção, invasão ou malware.');
+  return summary;
+}
+
+function analyzeScannerResult(resultRecord) {
+  const data = readJsonFileFlexible(resultRecord.file_path);
+  const metadata = extractMetadata(data);
+  const connections = getRawConnections(data);
+  const processes = getRawProcesses(data);
+  const listeningPorts = getRawListeningPorts(data);
+  const rawCollection = hasRawCollectionData(data);
+  const analysisSource = rawCollection ? 'raw-collection' : 'diagnostic-summary';
+  const attentionPorts = rawCollection ? buildAttentionPorts(listeningPorts) : buildAttentionPortsFromFindings(data.findings);
+  const sensitiveProcesses = buildSensitiveProcesses(processes, connections);
+  const externalConnections = buildExternalConnections(connections);
+  const riskLevel = metadata.risk_level || resultRecord.risk_level || null;
+  const riskScore = metadata.risk_score ?? resultRecord.risk_score ?? null;
+  const summaryCounts = buildSummaryCounts(data, { attentionPorts, sensitiveProcesses, externalConnections });
+
+  return {
+    resultId: resultRecord.id,
+    clientId: resultRecord.client_id,
+    analysisSource,
+    hostName: metadata.host_name || resultRecord.host_name || null,
+    scannerVersion: metadata.scanner_version || resultRecord.scanner_version || null,
+    collectedAt: metadata.collected_at || resultRecord.collected_at || null,
+    riskLevel,
+    risk_level: riskLevel,
+    riskScore,
+    risk_score: riskScore,
+    summary: summaryCounts,
+    attentionPorts,
+    sensitiveProcesses,
+    externalConnections,
+    executiveSummary: buildExecutiveSummary({ attentionPorts, sensitiveProcesses, externalConnections }),
+    technicalNotes: [
+      'Este diagnóstico não é antivírus.',
+      'Os achados devem ser validados por um técnico antes de qualquer ação.',
+      'A presença de uma porta, processo ou conexão não significa, isoladamente, comprometimento.'
+    ]
+  };
+}
+
 function extractSeverityCounts(findings) {
   if (!Array.isArray(findings)) return {};
 
@@ -241,8 +600,8 @@ function extractMetadata(json) {
     'timestamp',
     'generated_at'
   ]);
-  const riskLevel = pickString(json, ['risk_level', 'riskLevel', 'summary.riskLevel']);
-  const riskScore = pickInteger(json, ['risk_score', 'riskScore', 'summary.riskScore', 'score']);
+  const riskLevel = pickString(json, ['riskLevel', 'risk_level', 'risk', 'summary.riskLevel', 'summary.risk_level']);
+  const riskScore = pickNumber(json, ['riskScore', 'risk_score', 'score', 'summary.riskScore', 'summary.risk_score']);
 
   return {
     scanner_version: scannerVersion,
@@ -275,8 +634,8 @@ function buildSummary(json) {
       'timestamp',
       'generated_at'
     ]),
-    risk_level: pickString(json, ['risk_level', 'riskLevel', 'summary.riskLevel']),
-    risk_score: pickInteger(json, ['risk_score', 'riskScore', 'summary.riskScore', 'score']),
+    risk_level: pickString(json, ['risk_level', 'riskLevel', 'risk', 'summary.riskLevel', 'summary.risk_level']),
+    risk_score: pickNumber(json, ['risk_score', 'riskScore', 'score', 'summary.riskScore', 'summary.risk_score']),
     connections_count: getArrayLength(json.connections) || 0,
     processes_count: getArrayLength(json.processes) || 0,
     listening_ports_count: getArrayLength(json.listening_ports) || 0,
@@ -308,6 +667,7 @@ function deleteResultFile(filePath) {
 }
 
 module.exports = {
+  analyzeScannerResult,
   buildSummary,
   calculateBufferSha256,
   detectJsonEncoding,
