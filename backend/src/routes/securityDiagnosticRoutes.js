@@ -2,9 +2,11 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
+const multer = require('multer');
 const { db } = require('../models/db');
 const { authMiddleware } = require('../middleware/auth');
 const scannerService = require('../scanner/services/scannerPackageService');
+const scannerResultService = require('../scanner/services/scannerResultService');
 
 // Todos os endpoints abaixo necessitam de autenticação
 router.use(authMiddleware);
@@ -31,6 +33,18 @@ const queryRun = (sql, params = []) => new Promise((resolve, reject) => {
   });
 });
 
+const uploadJsonResult = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const extension = path.extname(file.originalname || '').toLowerCase();
+    if (extension !== '.json') {
+      return cb(new Error('Apenas arquivos .json sao aceitos.'));
+    }
+    return cb(null, true);
+  }
+}).single('file');
+
 // Middleware para verificar se o cliente existe
 async function checkClientExists(req, res, next) {
   const { clientId } = req.params;
@@ -45,6 +59,62 @@ async function checkClientExists(req, res, next) {
     console.error('Erro ao verificar cliente:', error);
     return res.status(500).json({ message: 'Erro interno do servidor ao verificar cliente.' });
   }
+}
+
+function runUploadMiddleware(req, res, next) {
+  uploadJsonResult(req, res, (error) => {
+    if (!error) return next();
+
+    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ message: 'Arquivo JSON excede o limite de 10 MB.' });
+    }
+
+    return res.status(400).json({ message: error.message || 'Arquivo invalido para upload.' });
+  });
+}
+
+async function getCurrentUserName(userId) {
+  if (!userId) return 'Sistema';
+
+  const user = await queryGet('SELECT name FROM users WHERE id = ?', [userId]);
+  return user?.name || 'Sistema';
+}
+
+function parsePackageId(packageId) {
+  if (packageId === undefined || packageId === null || packageId === '') return null;
+  const numericPackageId = Number(packageId);
+  return Number.isInteger(numericPackageId) && numericPackageId > 0 ? numericPackageId : NaN;
+}
+
+function buildResultResponse(result) {
+  if (!result) return null;
+
+  let summary = null;
+  if (result.summary_json) {
+    try {
+      summary = JSON.parse(result.summary_json);
+    } catch {
+      summary = null;
+    }
+  }
+
+  return {
+    id: result.id,
+    client_id: result.client_id,
+    package_id: result.package_id,
+    original_filename: result.original_filename,
+    sha256: result.sha256,
+    size_bytes: result.size_bytes,
+    scanner_version: result.scanner_version,
+    mode: result.mode,
+    host_name: result.host_name,
+    collected_at: result.collected_at,
+    risk_level: result.risk_level,
+    risk_score: result.risk_score,
+    summary,
+    uploaded_by: result.uploaded_by,
+    created_at: result.created_at
+  };
 }
 
 /**
@@ -270,6 +340,216 @@ router.delete('/clients/:clientId/security-diagnostic/packages/:packageId', chec
   } catch (error) {
     console.error('Erro ao excluir pacote do scanner:', error);
     return res.status(500).json({ message: 'Erro interno ao excluir pacote.' });
+  }
+});
+
+/**
+ * POST /api/clients/:clientId/security-diagnostic/results/upload
+ * Recebe manualmente o JSON gerado pelo scanner.
+ */
+router.post('/clients/:clientId/security-diagnostic/results/upload', checkClientExists, runUploadMiddleware, async (req, res) => {
+  console.log('[UploadResult] file:', req.file
+    ? {
+        fieldname: req.file.fieldname,
+        originalname: req.file.originalname,
+        encoding: req.file.encoding,
+        mimetype: req.file.mimetype,
+        size: req.file.size
+      }
+    : null);
+  console.log('[UploadResult] body:', req.body);
+
+  if (!req.file) {
+    return res.status(400).json({ message: 'Nenhum arquivo JSON foi enviado.' });
+  }
+
+  const firstBytesHex = scannerResultService.getFirstBytesHex(req.file.buffer);
+  let detectedEncoding = 'unknown';
+  let contentPreview = '';
+  try {
+    detectedEncoding = scannerResultService.detectJsonEncoding(req.file.buffer);
+    contentPreview = scannerResultService.getJsonContentPreview(req.file.buffer);
+  } catch (decodeError) {
+    console.error('[UploadResult] erro ao detectar encoding:', decodeError.message);
+  }
+
+  console.log('[UploadResult] firstBytesHex:', firstBytesHex);
+  console.log('[UploadResult] detectedEncoding:', detectedEncoding);
+  console.log('[UploadResult] preview:', contentPreview);
+
+  let parsedJson;
+  try {
+    parsedJson = scannerResultService.parseJsonBuffer(req.file.buffer);
+  } catch (parseError) {
+    console.error('[UploadResult] JSON parse error:', parseError.message);
+    return res.status(400).json({
+      message: 'Conteudo do arquivo nao e um JSON valido. Verifique se o arquivo esta em UTF-8, UTF-16 LE ou UTF-16 BE e se comeca com { ou [.',
+      firstBytesHex,
+      detectedEncoding,
+      preview: contentPreview
+    });
+  }
+
+  const packageId = parsePackageId(req.body?.package_id);
+  if (Number.isNaN(packageId)) {
+    return res.status(400).json({ message: 'package_id invalido.' });
+  }
+
+  try {
+    if (packageId) {
+      const pkg = await queryGet('SELECT id FROM scanner_packages WHERE id = ? AND client_id = ?', [packageId, req.client.id]);
+      if (!pkg) {
+        return res.status(404).json({ message: 'Pacote informado nao encontrado para este cliente.' });
+      }
+    }
+
+    const sha256 = scannerResultService.calculateBufferSha256(req.file.buffer);
+    const filePath = scannerResultService.saveResultFile(
+      req.client.id,
+      req.file.originalname,
+      req.file.buffer,
+      sha256
+    );
+    const metadata = scannerResultService.extractMetadata(parsedJson);
+    const summaryJson = JSON.stringify(scannerResultService.buildSummary(parsedJson));
+    const uploadedBy = await getCurrentUserName(req.userId);
+
+    try {
+      const insertResult = await queryRun(
+        `INSERT INTO scanner_diagnostic_results (
+          client_id, package_id, original_filename, file_path, sha256, size_bytes,
+          scanner_version, mode, host_name, collected_at, risk_level, risk_score,
+          summary_json, uploaded_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.client.id,
+          packageId,
+          req.file.originalname,
+          filePath,
+          sha256,
+          req.file.size,
+          metadata.scanner_version,
+          metadata.mode,
+          metadata.host_name,
+          metadata.collected_at,
+          metadata.risk_level,
+          metadata.risk_score,
+          summaryJson,
+          uploadedBy
+        ]
+      );
+
+      const savedResult = await queryGet('SELECT * FROM scanner_diagnostic_results WHERE id = ?', [insertResult.lastID]);
+      return res.status(201).json(buildResultResponse(savedResult));
+    } catch (error) {
+      scannerResultService.deleteResultFile(filePath);
+      throw error;
+    }
+  } catch (error) {
+    console.error('Erro ao salvar resultado do scanner:', error);
+    return res.status(500).json({ message: 'Erro interno ao salvar resultado do scanner.' });
+  }
+});
+
+/**
+ * GET /api/clients/:clientId/security-diagnostic/results
+ * Lista os resultados enviados manualmente para o cliente.
+ */
+router.get('/clients/:clientId/security-diagnostic/results', checkClientExists, async (req, res) => {
+  try {
+    const results = await queryAll(
+      `SELECT id, client_id, package_id, original_filename, sha256, size_bytes,
+              scanner_version, mode, host_name, collected_at, risk_level, risk_score,
+              summary_json, uploaded_by, created_at
+       FROM scanner_diagnostic_results
+       WHERE client_id = ?
+       ORDER BY created_at DESC`,
+      [req.client.id]
+    );
+    return res.json(results.map(buildResultResponse));
+  } catch (error) {
+    console.error('Erro ao listar resultados do scanner:', error);
+    return res.status(500).json({ message: 'Erro interno ao listar resultados.' });
+  }
+});
+
+/**
+ * GET /api/clients/:clientId/security-diagnostic/results/:resultId
+ * Retorna detalhes de um resultado enviado manualmente.
+ */
+router.get('/clients/:clientId/security-diagnostic/results/:resultId', checkClientExists, async (req, res) => {
+  const { resultId } = req.params;
+  try {
+    const result = await queryGet('SELECT * FROM scanner_diagnostic_results WHERE id = ? AND client_id = ?', [resultId, req.client.id]);
+    if (!result) {
+      return res.status(404).json({ message: 'Resultado nao encontrado.' });
+    }
+
+    return res.json(buildResultResponse(result));
+  } catch (error) {
+    console.error('Erro ao buscar resultado do scanner:', error);
+    return res.status(500).json({ message: 'Erro interno ao buscar resultado.' });
+  }
+});
+
+/**
+ * GET /api/clients/:clientId/security-diagnostic/results/:resultId/download
+ * Permite baixar o JSON enviado manualmente.
+ */
+router.get('/clients/:clientId/security-diagnostic/results/:resultId/download', checkClientExists, async (req, res) => {
+  const { resultId } = req.params;
+  try {
+    const result = await queryGet('SELECT * FROM scanner_diagnostic_results WHERE id = ? AND client_id = ?', [resultId, req.client.id]);
+    if (!result) {
+      return res.status(404).json({ message: 'Resultado nao encontrado.' });
+    }
+
+    const absolutePath = path.resolve(result.file_path);
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ message: 'Arquivo fisico do resultado nao encontrado no servidor.' });
+    }
+
+    const stat = fs.statSync(absolutePath);
+    const downloadName = scannerResultService.sanitizeFilename(result.original_filename);
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${downloadName}"`,
+      'Content-Length': stat.size
+    });
+
+    const fileStream = fs.createReadStream(absolutePath);
+    fileStream.on('error', (err) => {
+      console.error('Erro ao ler arquivo de resultado para download:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ message: 'Erro ao ler arquivo para download.' });
+      }
+    });
+    return fileStream.pipe(res);
+  } catch (error) {
+    console.error('Erro ao baixar resultado do scanner:', error);
+    return res.status(500).json({ message: 'Erro interno ao processar download.' });
+  }
+});
+
+/**
+ * DELETE /api/clients/:clientId/security-diagnostic/results/:resultId
+ * Remove o arquivo JSON e exclui o registro do banco.
+ */
+router.delete('/clients/:clientId/security-diagnostic/results/:resultId', checkClientExists, async (req, res) => {
+  const { resultId } = req.params;
+  try {
+    const result = await queryGet('SELECT * FROM scanner_diagnostic_results WHERE id = ? AND client_id = ?', [resultId, req.client.id]);
+    if (!result) {
+      return res.status(404).json({ message: 'Resultado nao encontrado.' });
+    }
+
+    scannerResultService.deleteResultFile(result.file_path);
+    await queryRun('DELETE FROM scanner_diagnostic_results WHERE id = ?', [resultId]);
+
+    return res.json({ message: 'Resultado excluido com sucesso.' });
+  } catch (error) {
+    console.error('Erro ao excluir resultado do scanner:', error);
+    return res.status(500).json({ message: 'Erro interno ao excluir resultado.' });
   }
 });
 

@@ -253,6 +253,25 @@ const initDb = async () => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
+  await run(`CREATE TABLE IF NOT EXISTS scanner_diagnostic_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id INTEGER NOT NULL,
+    package_id INTEGER,
+    original_filename TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    size_bytes INTEGER,
+    scanner_version TEXT,
+    mode TEXT,
+    host_name TEXT,
+    collected_at TEXT,
+    risk_level TEXT,
+    risk_score INTEGER,
+    summary_json TEXT,
+    uploaded_by TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   console.log('Database initialized.');
 };
 

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Download, Loader, Package, RefreshCw, Save, Settings, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Download, Eye, FileJson, Loader, Package, RefreshCw, Save, Settings, Trash2, Upload, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../services/api';
 
@@ -98,17 +98,52 @@ function getPackageField(pkg, names, fallback = '-') {
   return fallback;
 }
 
+function formatJson(value) {
+  if (!value) return '-';
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  }
+  return JSON.stringify(value, null, 2);
+}
+
+function getRiskStyle(riskLevel) {
+  const risk = String(riskLevel || '').toLowerCase();
+  if (['critical', 'critico', 'crítico', 'high', 'alto'].includes(risk)) {
+    return { color: '#ef4444', border: '1px solid rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.1)' };
+  }
+  if (['medium', 'medio', 'médio', 'moderate'].includes(risk)) {
+    return { color: 'var(--accent-orange)', border: '1px solid rgba(245,158,11,0.25)', background: 'rgba(245,158,11,0.1)' };
+  }
+  if (['low', 'baixo'].includes(risk)) {
+    return { color: 'var(--accent-emerald)', border: '1px solid rgba(16,185,129,0.25)', background: 'rgba(16,185,129,0.1)' };
+  }
+  return { color: 'var(--text-light)', border: '1px solid var(--border-glass)', background: 'rgba(255,255,255,0.04)' };
+}
+
 export default function SecurityDiagnosticPanel({ clientId, clientName }) {
   const [config, setConfig] = useState(defaultConfig);
   const [allowlistText, setAllowlistText] = useState('');
   const [sensitiveProcessesText, setSensitiveProcessesText] = useState('');
   const [packages, setPackages] = useState([]);
+  const [results, setResults] = useState([]);
+  const [resultFile, setResultFile] = useState(null);
+  const [selectedResult, setSelectedResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadingPackages, setLoadingPackages] = useState(false);
+  const [loadingResults, setLoadingResults] = useState(false);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [uploadingResult, setUploadingResult] = useState(false);
+  const [viewingResultId, setViewingResultId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+  const [downloadingResultId, setDownloadingResultId] = useState(null);
+  const [deletingResultId, setDeletingResultId] = useState(null);
+  const resultFileInputRef = useRef(null);
 
   const clientLabel = useMemo(() => clientName || `cliente ${clientId}`, [clientId, clientName]);
 
@@ -145,18 +180,30 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
     }
   }, [clientId]);
 
+  const loadResults = useCallback(async () => {
+    setLoadingResults(true);
+    try {
+      const { data } = await api.get(`/clients/${clientId}/security-diagnostic/results`);
+      setResults(Array.isArray(data) ? data : data?.results || []);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Erro ao carregar resultados enviados.');
+    } finally {
+      setLoadingResults(false);
+    }
+  }, [clientId]);
+
   useEffect(() => {
     let mounted = true;
     setLoading(true);
 
-    Promise.allSettled([loadConfig(), loadPackages()]).finally(() => {
+    Promise.allSettled([loadConfig(), loadPackages(), loadResults()]).finally(() => {
       if (mounted) setLoading(false);
     });
 
     return () => {
       mounted = false;
     };
-  }, [loadConfig, loadPackages]);
+  }, [loadConfig, loadPackages, loadResults]);
 
   const buildPayload = () => ({
     scanner_version: config.scanner_version || '0.1',
@@ -244,6 +291,115 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
       toast.error(err.response?.data?.message || 'Erro ao excluir pacote.');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleResultFileChange = (event) => {
+    const file = event.target.files?.[0] || null;
+    if (file && !file.name.toLowerCase().endsWith('.json')) {
+      toast.error('Selecione um arquivo .json valido.');
+      event.target.value = '';
+      setResultFile(null);
+      return;
+    }
+
+    setResultFile(file);
+  };
+
+  const clearResultFile = () => {
+    setResultFile(null);
+    if (resultFileInputRef.current) {
+      resultFileInputRef.current.value = '';
+    }
+  };
+
+  const handleUploadResult = async () => {
+    if (!resultFile) {
+      toast.error('Selecione um arquivo JSON antes de enviar.');
+      return;
+    }
+
+    if (!resultFile.name.toLowerCase().endsWith('.json')) {
+      toast.error('Apenas arquivos .json sao aceitos.');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', resultFile);
+
+    setUploadingResult(true);
+    const toastId = toast.loading('Enviando resultado JSON...');
+    try {
+      await api.post(`/clients/${clientId}/security-diagnostic/results/upload`, formData);
+      clearResultFile();
+      await loadResults();
+      toast.success('Resultado JSON enviado com sucesso.', { id: toastId });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Erro ao enviar resultado JSON.', { id: toastId });
+    } finally {
+      setUploadingResult(false);
+    }
+  };
+
+  const handleViewResult = async (result) => {
+    const resultId = getPackageField(result, ['id', 'result_id']);
+
+    setViewingResultId(resultId);
+    try {
+      const { data } = await api.get(`/clients/${clientId}/security-diagnostic/results/${resultId}`);
+      setSelectedResult(data);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Erro ao carregar detalhes do resultado.');
+    } finally {
+      setViewingResultId(null);
+    }
+  };
+
+  const handleDownloadResult = async (result) => {
+    const resultId = getPackageField(result, ['id', 'result_id']);
+    const filename = getPackageField(result, ['original_filename', 'filename', 'file_name'], 'resultado-diagnostico.json');
+
+    setDownloadingResultId(resultId);
+    try {
+      const { data } = await api.get(
+        `/clients/${clientId}/security-diagnostic/results/${resultId}/download`,
+        { responseType: 'blob' }
+      );
+
+      const url = window.URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Download do resultado iniciado.');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Erro ao baixar resultado JSON.');
+    } finally {
+      setDownloadingResultId(null);
+    }
+  };
+
+  const handleDeleteResult = async (result) => {
+    const resultId = getPackageField(result, ['id', 'result_id']);
+    const filename = getPackageField(result, ['original_filename', 'filename', 'file_name'], 'resultado selecionado');
+
+    if (!window.confirm(`Excluir o resultado "${filename}"?`)) return;
+
+    setDeletingResultId(resultId);
+    try {
+      await api.delete(`/clients/${clientId}/security-diagnostic/results/${resultId}`);
+      if (selectedResult?.id === resultId) {
+        setSelectedResult(null);
+      }
+      await loadResults();
+      toast.success('Resultado excluido com sucesso.');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Erro ao excluir resultado.');
+    } finally {
+      setDeletingResultId(null);
     }
   };
 
@@ -434,6 +590,153 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
         </div>
       </div>
 
+      <div className="glass-panel" style={{ padding: '2rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.5rem' }}>
+          <div style={{ color: 'var(--accent-emerald)', background: 'rgba(16,185,129,0.1)', padding: '8px', borderRadius: '10px' }}>
+            <FileJson size={20} />
+          </div>
+          <div>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#fff', margin: 0 }}>Resultados Enviados</h3>
+            <p style={{ color: 'var(--text-light)', fontSize: '0.82rem', margin: '4px 0 0' }}>
+              Upload manual do JSON gerado pelo Goldtech Network Behavior Scanner.
+            </p>
+          </div>
+          <button
+            onClick={loadResults}
+            disabled={loadingResults}
+            title="Atualizar resultados"
+            style={{ marginLeft: 'auto', ...actionButtonStyle, color: 'var(--text-light)' }}
+          >
+            <RefreshCw className={loadingResults ? 'animate-spin' : ''} size={16} />
+            Atualizar
+          </button>
+        </div>
+
+        <div style={{ border: '1px solid rgba(245,158,11,0.25)', background: 'rgba(245,158,11,0.05)', borderRadius: '16px', padding: '1rem', marginBottom: '1.5rem' }}>
+          <p style={{ color: 'var(--text-light)', lineHeight: 1.7, margin: 0 }}>
+            O envio do JSON é manual. Nesta fase, o sistema apenas armazena o resultado e exibe metadados básicos.
+            O diagnóstico não confirma infecção, invasão ou malware; ele aponta indícios e itens que exigem validação técnica.
+          </p>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 1fr) auto', gap: '12px', alignItems: 'end', marginBottom: '1.5rem' }}>
+          <div style={fieldStyle}>
+            <label style={labelStyle}>Arquivo JSON do Scanner</label>
+            <input
+              ref={resultFileInputRef}
+              type="file"
+              accept=".json,application/json"
+              onChange={handleResultFileChange}
+              style={{ ...inputStyle, padding: '11px 1rem' }}
+            />
+            {resultFile && (
+              <span style={{ color: 'var(--text-light)', fontSize: '0.82rem' }}>
+                Selecionado: {resultFile.name} ({formatBytes(resultFile.size)})
+              </span>
+            )}
+          </div>
+          <button
+            className="btn-premium"
+            onClick={handleUploadResult}
+            disabled={uploadingResult || !resultFile}
+            style={{ height: '48px', padding: '0 1rem', whiteSpace: 'nowrap' }}
+          >
+            {uploadingResult ? <Loader className="animate-spin" size={16} /> : <Upload size={16} />}
+            Enviar resultado JSON
+          </button>
+        </div>
+
+        <div style={{ overflowX: 'auto' }}>
+          <table className="table-enterprise">
+            <thead>
+              <tr>
+                <th>Data upload</th>
+                <th>Host</th>
+                <th>Versão</th>
+                <th>Modo</th>
+                <th>Risco</th>
+                <th>Score</th>
+                <th>Arquivo</th>
+                <th>Tamanho</th>
+                <th style={{ textAlign: 'right' }}>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loadingResults ? (
+                <tr>
+                  <td colSpan="9" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-light)' }}>
+                    Carregando resultados enviados...
+                  </td>
+                </tr>
+              ) : results.length === 0 ? (
+                <tr>
+                  <td colSpan="9" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-light)' }}>
+                    Nenhum resultado JSON enviado para este cliente.
+                  </td>
+                </tr>
+              ) : (
+                results.map((result) => {
+                  const resultId = getPackageField(result, ['id', 'result_id']);
+                  const filename = getPackageField(result, ['original_filename', 'filename', 'file_name']);
+                  const riskLevel = getPackageField(result, ['risk_level', 'riskLevel'], '-');
+                  const riskStyle = getRiskStyle(riskLevel);
+
+                  return (
+                    <tr key={resultId}>
+                      <td>{formatDate(getPackageField(result, ['created_at', 'createdAt', 'uploaded_at']))}</td>
+                      <td>{getPackageField(result, ['host_name', 'hostName', 'host'], '-')}</td>
+                      <td>{getPackageField(result, ['scanner_version', 'scannerVersion'], '-')}</td>
+                      <td>{getPackageField(result, ['mode'], '-')}</td>
+                      <td>
+                        <span className="status-badge" style={riskStyle}>
+                          {riskLevel}
+                        </span>
+                      </td>
+                      <td>{getPackageField(result, ['risk_score', 'riskScore', 'score'], '-')}</td>
+                      <td style={{ maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={filename}>
+                        {filename}
+                      </td>
+                      <td>{formatBytes(getPackageField(result, ['size_bytes', 'sizeBytes', 'size'], 0))}</td>
+                      <td>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                          <button
+                            onClick={() => handleViewResult(result)}
+                            disabled={viewingResultId === resultId}
+                            title="Visualizar resultado"
+                            style={{ ...actionButtonStyle, color: 'var(--primary-gold)' }}
+                          >
+                            {viewingResultId === resultId ? <Loader className="animate-spin" size={16} /> : <Eye size={16} />}
+                            Visualizar
+                          </button>
+                          <button
+                            onClick={() => handleDownloadResult(result)}
+                            disabled={downloadingResultId === resultId}
+                            title="Baixar JSON"
+                            style={{ ...actionButtonStyle, color: 'var(--accent-blue)' }}
+                          >
+                            {downloadingResultId === resultId ? <Loader className="animate-spin" size={16} /> : <Download size={16} />}
+                            Baixar
+                          </button>
+                          <button
+                            onClick={() => handleDeleteResult(result)}
+                            disabled={deletingResultId === resultId}
+                            title="Excluir resultado"
+                            style={{ ...actionButtonStyle, color: 'var(--accent-red)' }}
+                          >
+                            {deletingResultId === resultId ? <Loader className="animate-spin" size={16} /> : <Trash2 size={16} />}
+                            Excluir
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div className="glass-panel" style={{ padding: '2rem', borderLeft: '4px solid var(--accent-orange)', background: 'rgba(245,158,11,0.05)' }}>
         <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
           <div style={{ color: 'var(--accent-orange)', background: 'rgba(245,158,11,0.12)', padding: '10px', borderRadius: '12px', flexShrink: 0 }}>
@@ -450,6 +753,95 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
           </div>
         </div>
       </div>
+
+      {selectedResult && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.75)',
+            zIndex: 1200,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '24px',
+            backdropFilter: 'blur(4px)'
+          }}
+        >
+          <div
+            className="glass-panel animate-scale"
+            style={{
+              width: '100%',
+              maxWidth: '860px',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              padding: '2rem'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.5rem' }}>
+              <div style={{ color: 'var(--accent-emerald)', background: 'rgba(16,185,129,0.1)', padding: '8px', borderRadius: '10px' }}>
+                <FileJson size={20} />
+              </div>
+              <div>
+                <h3 style={{ color: '#fff', fontSize: '1.15rem', fontWeight: 800, margin: 0 }}>Resultado do Scanner</h3>
+                <p style={{ color: 'var(--text-light)', margin: '4px 0 0', fontSize: '0.82rem' }}>
+                  {getPackageField(selectedResult, ['original_filename', 'filename', 'file_name'])}
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedResult(null)}
+                title="Fechar"
+                style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: 'var(--text-light)', cursor: 'pointer' }}
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '1.5rem' }}>
+              {[
+                ['Host', getPackageField(selectedResult, ['host_name', 'hostName', 'host'])],
+                ['Versão', getPackageField(selectedResult, ['scanner_version', 'scannerVersion'])],
+                ['Modo', getPackageField(selectedResult, ['mode'])],
+                ['Risco', getPackageField(selectedResult, ['risk_level', 'riskLevel'])],
+                ['Score', getPackageField(selectedResult, ['risk_score', 'riskScore', 'score'])],
+                ['Data da coleta', formatDate(getPackageField(selectedResult, ['collected_at', 'collectedAt']))],
+              ].map(([label, value]) => (
+                <div key={label} style={{ border: '1px solid var(--border-glass)', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', padding: '1rem' }}>
+                  <div style={{ ...labelStyle, marginBottom: '8px' }}>{label}</div>
+                  <div style={{ color: '#fff', fontWeight: 700, overflowWrap: 'anywhere' }}>{value || '-'}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ ...fieldStyle, marginBottom: '1.5rem' }}>
+              <label style={labelStyle}>Hash SHA256</label>
+              <code style={{ color: 'var(--text-light)', border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '0.9rem', background: 'rgba(0,0,0,0.22)', overflowWrap: 'anywhere' }}>
+                {getPackageField(selectedResult, ['sha256'], '-')}
+              </code>
+            </div>
+
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Resumo JSON</label>
+              <pre
+                style={{
+                  margin: 0,
+                  padding: '1rem',
+                  borderRadius: '12px',
+                  border: '1px solid var(--border-glass)',
+                  background: 'rgba(0,0,0,0.3)',
+                  color: 'var(--text-light)',
+                  maxHeight: '320px',
+                  overflow: 'auto',
+                  fontSize: '0.82rem',
+                  lineHeight: 1.6
+                }}
+              >
+                {formatJson(selectedResult.summary)}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
