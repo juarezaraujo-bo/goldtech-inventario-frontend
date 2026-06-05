@@ -117,6 +117,10 @@ function buildResultResponse(result) {
   };
 }
 
+function getMissingResultFileMessage() {
+  return 'Arquivo do resultado nao encontrado no servidor. Envie o JSON novamente para continuar.';
+}
+
 /**
  * GET /api/clients/:clientId/security-diagnostic/config
  * Retorna as configurações do scanner para um determinado cliente.
@@ -348,34 +352,17 @@ router.delete('/clients/:clientId/security-diagnostic/packages/:packageId', chec
  * Recebe manualmente o JSON gerado pelo scanner.
  */
 router.post('/clients/:clientId/security-diagnostic/results/upload', checkClientExists, runUploadMiddleware, async (req, res) => {
-  console.log('[UploadResult] file:', req.file
-    ? {
-        fieldname: req.file.fieldname,
-        originalname: req.file.originalname,
-        encoding: req.file.encoding,
-        mimetype: req.file.mimetype,
-        size: req.file.size
-      }
-    : null);
-  console.log('[UploadResult] body:', req.body);
-
   if (!req.file) {
     return res.status(400).json({ message: 'Nenhum arquivo JSON foi enviado.' });
   }
 
   const firstBytesHex = scannerResultService.getFirstBytesHex(req.file.buffer);
   let detectedEncoding = 'unknown';
-  let contentPreview = '';
   try {
     detectedEncoding = scannerResultService.detectJsonEncoding(req.file.buffer);
-    contentPreview = scannerResultService.getJsonContentPreview(req.file.buffer);
   } catch (decodeError) {
     console.error('[UploadResult] erro ao detectar encoding:', decodeError.message);
   }
-
-  console.log('[UploadResult] firstBytesHex:', firstBytesHex);
-  console.log('[UploadResult] detectedEncoding:', detectedEncoding);
-  console.log('[UploadResult] preview:', contentPreview);
 
   let parsedJson;
   try {
@@ -385,8 +372,7 @@ router.post('/clients/:clientId/security-diagnostic/results/upload', checkClient
     return res.status(400).json({
       message: 'Conteudo do arquivo nao e um JSON valido. Verifique se o arquivo esta em UTF-8, UTF-16 LE ou UTF-16 BE e se comeca com { ou [.',
       firstBytesHex,
-      detectedEncoding,
-      preview: contentPreview
+      detectedEncoding
     });
   }
 
@@ -487,14 +473,14 @@ router.get('/clients/:clientId/security-diagnostic/results/:resultId/analysis', 
 
     const absolutePath = path.resolve(result.file_path);
     if (!fs.existsSync(absolutePath)) {
-      return res.status(404).json({ message: 'Arquivo fisico do resultado nao encontrado no servidor.' });
+      return res.status(404).json({ message: getMissingResultFileMessage() });
     }
 
     const analysis = scannerResultService.analyzeScannerResult(result);
     return res.json(analysis);
   } catch (error) {
     console.error('Erro ao analisar resultado do scanner:', error);
-    return res.status(500).json({ message: 'Erro interno ao analisar resultado.' });
+    return res.status(500).json({ message: 'Nao foi possivel analisar o resultado neste momento.' });
   }
 });
 
@@ -512,7 +498,7 @@ router.get('/clients/:clientId/security-diagnostic/results/:resultId/report', ch
 
     const absolutePath = path.resolve(result.file_path);
     if (!fs.existsSync(absolutePath)) {
-      return res.status(404).json({ message: 'Arquivo fisico do resultado nao encontrado no servidor.' });
+      return res.status(404).json({ message: getMissingResultFileMessage() });
     }
 
     const analysis = scannerResultService.analyzeScannerResult(result);
@@ -532,7 +518,7 @@ router.get('/clients/:clientId/security-diagnostic/results/:resultId/report', ch
     return res.send(html);
   } catch (error) {
     console.error('Erro ao gerar relatorio do scanner:', error);
-    return res.status(500).json({ message: 'Erro interno ao gerar relatorio.' });
+    return res.status(500).json({ message: 'Nao foi possivel gerar o relatorio HTML neste momento.' });
   }
 });
 
@@ -550,7 +536,7 @@ router.get('/clients/:clientId/security-diagnostic/results/:resultId/report/pdf'
 
     const absolutePath = path.resolve(result.file_path);
     if (!fs.existsSync(absolutePath)) {
-      return res.status(404).json({ message: 'Arquivo fisico do resultado nao encontrado no servidor.' });
+      return res.status(404).json({ message: getMissingResultFileMessage() });
     }
 
     const analysis = scannerResultService.analyzeScannerResult(result);
@@ -572,7 +558,7 @@ router.get('/clients/:clientId/security-diagnostic/results/:resultId/report/pdf'
     return res.send(pdfBuffer);
   } catch (error) {
     console.error('Erro ao gerar PDF do relatorio do scanner:', error);
-    return res.status(500).json({ message: 'Erro interno ao gerar PDF do relatorio.' });
+    return res.status(500).json({ message: 'Nao foi possivel gerar o relatorio PDF neste momento.' });
   }
 });
 
@@ -609,7 +595,7 @@ router.get('/clients/:clientId/security-diagnostic/results/:resultId/download', 
 
     const absolutePath = path.resolve(result.file_path);
     if (!fs.existsSync(absolutePath)) {
-      return res.status(404).json({ message: 'Arquivo fisico do resultado nao encontrado no servidor.' });
+      return res.status(404).json({ message: getMissingResultFileMessage() });
     }
 
     const stat = fs.statSync(absolutePath);

@@ -31,6 +31,28 @@ backend/.env.local
 *.sqlite3
 *.db
 
+# Scanner generated files
+backend/storage/scanner-results/*
+backend/storage/scanner-uploads/*
+backend/storage/scanner-reports/*
+backend/storage/scanner-packages/*.zip
+!backend/storage/scanner-packages/.gitkeep
+!backend/storage/scanner-results/.gitkeep
+!backend/storage/scanner-uploads/.gitkeep
+!backend/storage/scanner-reports/.gitkeep
+
+# Agent generated files
+agent/collections/*
+agent/reports/*
+agent/baseline/*
+!agent/collections/.gitkeep
+!agent/reports/.gitkeep
+!agent/baseline/.gitkeep
+
+# Local generated storage
+storage/*
+!storage/.gitkeep
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -167,6 +167,20 @@ function getProcessPath(processItem) {
   return value;
 }
 
+async function getApiErrorMessage(err, fallback) {
+  const data = err.response?.data;
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text();
+      const parsed = JSON.parse(text);
+      return parsed?.message || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  return data?.message || fallback;
+}
+
 export default function SecurityDiagnosticPanel({ clientId, clientName }) {
   const [config, setConfig] = useState(defaultConfig);
   const [allowlistText, setAllowlistText] = useState('');
@@ -466,7 +480,7 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
       window.URL.revokeObjectURL(url);
       toast.success('Relatório gerado com sucesso.');
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Erro ao gerar relatório.');
+      toast.error(await getApiErrorMessage(err, 'Erro ao gerar relatório HTML.'));
     } finally {
       setDownloadingReportId(null);
     }
@@ -495,7 +509,7 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
       window.URL.revokeObjectURL(url);
       toast.success('Relatório PDF gerado com sucesso.');
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Erro ao gerar relatório PDF.');
+      toast.error(await getApiErrorMessage(err, 'Erro ao gerar relatório PDF.'));
     } finally {
       setDownloadingPdfId(null);
     }
@@ -662,6 +676,7 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
                   const packageId = getPackageField(pkg, ['id', 'package_id']);
                   const filename = getPackageField(pkg, ['filename', 'file_name', 'name']);
                   const sha256 = getPackageField(pkg, ['sha256', 'checksum_sha256']);
+                  const isPackageBusy = downloadingId === packageId || deletingId === packageId;
 
                   return (
                     <tr key={packageId}>
@@ -682,7 +697,7 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
                           <button
                             onClick={() => handleDownload(pkg)}
-                            disabled={downloadingId === packageId}
+                            disabled={isPackageBusy}
                             title="Baixar pacote"
                             style={{ ...actionButtonStyle, color: 'var(--accent-blue)' }}
                           >
@@ -691,7 +706,7 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
                           </button>
                           <button
                             onClick={() => handleDelete(pkg)}
-                            disabled={deletingId === packageId}
+                            disabled={isPackageBusy}
                             title="Excluir pacote"
                             style={{ ...actionButtonStyle, color: 'var(--accent-red)' }}
                           >
@@ -799,6 +814,12 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
                   const filename = getPackageField(result, ['original_filename', 'filename', 'file_name']);
                   const riskLevel = getPackageField(result, ['risk_level', 'riskLevel'], '-');
                   const riskStyle = getRiskStyle(riskLevel);
+                  const isResultBusy = analyzingResultId === resultId ||
+                    viewingResultId === resultId ||
+                    downloadingResultId === resultId ||
+                    downloadingReportId === resultId ||
+                    downloadingPdfId === resultId ||
+                    deletingResultId === resultId;
 
                   return (
                     <tr key={resultId}>
@@ -820,7 +841,7 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
                           <button
                             onClick={() => handleAnalyzeResult(resultId)}
-                            disabled={analyzingResultId === resultId}
+                            disabled={isResultBusy}
                             title="Analisar resultado"
                             style={{ ...actionButtonStyle, color: 'var(--accent-emerald)' }}
                           >
@@ -829,7 +850,7 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
                           </button>
                           <button
                             onClick={() => handleViewResult(result)}
-                            disabled={viewingResultId === resultId}
+                            disabled={isResultBusy}
                             title="Visualizar resultado"
                             style={{ ...actionButtonStyle, color: 'var(--primary-gold)' }}
                           >
@@ -838,7 +859,7 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
                           </button>
                           <button
                             onClick={() => handleDownloadResult(result)}
-                            disabled={downloadingResultId === resultId}
+                            disabled={isResultBusy}
                             title="Baixar JSON"
                             style={{ ...actionButtonStyle, color: 'var(--accent-blue)' }}
                           >
@@ -847,7 +868,7 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
                           </button>
                           <button
                             onClick={() => handleDownloadReport(result)}
-                            disabled={downloadingReportId === resultId}
+                            disabled={isResultBusy}
                             title="Baixar relatório HTML"
                             style={{ ...actionButtonStyle, color: 'var(--accent-emerald)' }}
                           >
@@ -856,7 +877,7 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
                           </button>
                           <button
                             onClick={() => handleDownloadReportPdf(result)}
-                            disabled={downloadingPdfId === resultId}
+                            disabled={isResultBusy}
                             title="Baixar relatório PDF"
                             style={{ ...actionButtonStyle, color: 'var(--primary-gold)' }}
                           >
@@ -865,7 +886,7 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
                           </button>
                           <button
                             onClick={() => handleDeleteResult(result)}
-                            disabled={deletingResultId === resultId}
+                            disabled={isResultBusy}
                             title="Excluir resultado"
                             style={{ ...actionButtonStyle, color: 'var(--accent-red)' }}
                           >
