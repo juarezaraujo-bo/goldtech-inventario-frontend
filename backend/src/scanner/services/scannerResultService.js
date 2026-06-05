@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const puppeteer = require('puppeteer');
 
 const MAX_SUMMARY_FINDINGS = 20;
 const ATTENTION_PORTS = new Set([21, 22, 23, 25, 53, 80, 135, 139, 445, 1433, 3306, 3389, 5432, 5900, 5985, 5986, 8080]);
@@ -666,9 +667,346 @@ function deleteResultFile(filePath) {
   }
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatReportValue(value, fallback = '-') {
+  if (value === undefined || value === null || value === '') return fallback;
+  return String(value);
+}
+
+function formatReportDate(value) {
+  if (!value) return '-';
+  const date = new Date(String(value).replace(' ', 'T'));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('pt-BR');
+}
+
+function renderRows(items, columns, emptyMessage) {
+  const rows = Array.isArray(items) ? items : [];
+  if (rows.length === 0) {
+    return `<tr><td colspan="${columns.length}" class="empty">${escapeHtml(emptyMessage)}</td></tr>`;
+  }
+
+  return rows.map((item) => (
+    '<tr>' +
+    columns.map((column) => `<td>${escapeHtml(formatReportValue(column.value(item)))}</td>`).join('') +
+    '</tr>'
+  )).join('');
+}
+
+function buildReportFilename(client, analysis) {
+  const clientPart = sanitizeFilename(client?.name || 'cliente').replace(/\.json$/i, '');
+  const hostPart = sanitizeFilename(analysis.hostName || 'host').replace(/\.json$/i, '');
+  const datePart = new Date().toISOString().slice(0, 10);
+  return `relatorio-diagnostico-${clientPart}-${hostPart}-${datePart}.html`;
+}
+
+function buildReportPdfFilename(client, analysis) {
+  const clientPart = sanitizeFilename(client?.name || 'cliente').replace(/\.json$/i, '');
+  const hostPart = sanitizeFilename(analysis.hostName || 'host').replace(/\.json$/i, '');
+  const datePart = new Date().toISOString().slice(0, 10);
+  return `diagnostico-seguranca-${clientPart}-${hostPart}-${datePart}.pdf`;
+}
+
+function formatAttentionLevel(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'Não classificado';
+
+  if (['low', 'baixo'].includes(normalized)) return 'Baixo';
+  if (['medium', 'medio', 'médio', 'moderate'].includes(normalized)) return 'Médio';
+  if (['high', 'alto', 'critical', 'critico', 'crítico'].includes(normalized)) return 'Alto';
+
+  return formatReportValue(value, 'Não classificado');
+}
+
+function renderList(items, emptyMessage) {
+  const rows = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (rows.length === 0) {
+    return `<p class="muted">${escapeHtml(emptyMessage)}</p>`;
+  }
+
+  return `<ul>${rows.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+}
+
+function renderPointCard(title, count, description) {
+  return `
+        <article class="point-card">
+          <div class="point-count">${escapeHtml(formatReportValue(count, '0'))}</div>
+          <div>
+            <h3>${escapeHtml(title)}</h3>
+            <p>${escapeHtml(description)}</p>
+          </div>
+        </article>`;
+}
+
+function renderSecurityDiagnosticReportHtml({ client, analysis }) {
+  const summary = analysis.summary || {};
+  const attentionLevel = formatAttentionLevel(analysis.riskLevel || analysis.risk_level);
+  const riskScore = formatReportValue(analysis.riskScore ?? analysis.risk_score);
+  const generatedAt = formatReportDate(new Date().toISOString());
+  const collectedAt = formatReportDate(analysis.collectedAt);
+  const clientName = formatReportValue(client?.name);
+  const hostName = formatReportValue(analysis.hostName);
+  const scannerVersion = formatReportValue(analysis.scannerVersion);
+
+  const indicators = [
+    ['Conexões analisadas', summary.connectionsCount],
+    ['Processos analisados', summary.processesCount],
+    ['Portas em escuta', summary.listeningPortsCount],
+    ['Conexões externas observadas', summary.externalConnectionsCount],
+    ['Processos sensíveis/administrativos', summary.sensitiveProcessesCount],
+    ['Portas que exigem validação', summary.attentionPortsCount]
+  ];
+
+  const executiveSummary = [
+    'Foi realizado um diagnóstico técnico no equipamento analisado com foco em conexões de rede, portas em escuta e processos relevantes.',
+    'Os itens identificados neste relatório representam pontos que devem ser revisados para confirmar se estão alinhados ao perfil esperado de uso do ambiente.'
+  ];
+
+  const technicalNotes = Array.isArray(analysis.technicalNotes) ? analysis.technicalNotes : [];
+  const recommendations = [
+    'Confirmar se ferramentas administrativas foram utilizadas por equipe autorizada.',
+    'Validar se as portas identificadas são necessárias para a operação.',
+    'Revisar conexões externas fora do padrão esperado.',
+    'Repetir o diagnóstico após ajustes.',
+    'Avaliar políticas de firewall, controle de acesso e monitoramento contínuo.'
+  ];
+  const nextSteps = [
+    'Validação técnica dos achados.',
+    'Classificação do que é esperado ou não no ambiente.',
+    'Ajustes de firewall, permissões ou serviços, se necessário.',
+    'Nova coleta para comparação.',
+    'Definição de monitoramento recorrente.'
+  ];
+
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Diagnóstico Executivo de Segurança</title>
+  <style>
+    :root {
+      --gold: #b8902e;
+      --gold-soft: #fff4cf;
+      --green: #047857;
+      --green-dark: #064e3b;
+      --ink: #111827;
+      --muted: #64748b;
+      --line: #e5e7eb;
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: var(--ink); background: var(--bg); line-height: 1.55; }
+    .page { max-width: 1120px; margin: 0 auto; padding: 28px 22px 46px; }
+    .cover { position: relative; overflow: hidden; color: #fff; background: linear-gradient(135deg, #07111f 0%, #0b2f29 68%, #0f5132 100%); border-radius: 22px; padding: 34px; border-bottom: 6px solid var(--gold); box-shadow: 0 20px 45px rgba(15, 23, 42, .16); }
+    .cover:after { content: ""; position: absolute; right: -90px; top: -120px; width: 280px; height: 280px; border-radius: 50%; background: rgba(184, 144, 46, .22); }
+    .brand { color: #f9dd82; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; }
+    h1 { margin: 10px 0 8px; font-size: 34px; line-height: 1.1; max-width: 720px; }
+    .subtitle { max-width: 760px; color: #dbeafe; margin: 0; font-size: 15px; }
+    h2 { margin: 0 0 14px; font-size: 20px; color: #0f172a; }
+    h3 { margin: 0 0 5px; font-size: 15px; color: #0f172a; }
+    section { margin-top: 22px; }
+    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-top: 26px; position: relative; z-index: 1; }
+    .meta div, .card, .metric, .point-card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 17px; }
+    .meta div { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.18); }
+    .meta label, .metric label, .level-label { display: block; color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .07em; margin-bottom: 6px; }
+    .cover .meta label { color: #cbd5e1; }
+    .meta strong, .metric strong { font-size: 15px; overflow-wrap: anywhere; }
+    .cover .meta strong { color: #fff; }
+    .notice { border-left: 5px solid var(--gold); background: var(--gold-soft); color: #3f2f08; }
+    .executive-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(240px, .8fr); gap: 16px; }
+    .level { display: flex; align-items: center; justify-content: space-between; gap: 18px; background: #ecfdf5; border-color: #bbf7d0; }
+    .level strong { display: block; font-size: 30px; color: var(--green-dark); }
+    .score { color: var(--muted); font-weight: 700; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 12px; }
+    .metric strong { display: block; font-size: 28px; color: var(--green); }
+    .points { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+    .point-card { display: flex; gap: 14px; align-items: flex-start; }
+    .point-count { min-width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; background: #ecfdf5; color: var(--green-dark); font-size: 21px; font-weight: 900; }
+    .point-card p, .muted { color: var(--muted); margin: 0; }
+    .section-kicker { color: var(--green); font-weight: 800; text-transform: uppercase; letter-spacing: .08em; font-size: 11px; margin-bottom: 6px; }
+    ul { margin: 0; padding-left: 20px; }
+    li { margin: 6px 0; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+    th { text-align: left; background: #0f172a; color: #fff; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 12px; }
+    td { border-top: 1px solid var(--line); padding: 12px; font-size: 13px; vertical-align: top; }
+    tr:nth-child(even) td { background: #f9fafb; }
+    .empty { color: var(--muted); text-align: center; padding: 24px; }
+    footer { margin-top: 28px; color: var(--muted); font-size: 12px; text-align: center; }
+    @media (max-width: 780px) { .executive-grid { grid-template-columns: 1fr; } h1 { font-size: 28px; } .cover { padding: 26px; } }
+    @media print { body { background: #fff; } .page { max-width: none; padding: 0; } .cover, .card, .metric, .point-card, table { break-inside: avoid; box-shadow: none; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="cover">
+      <div class="brand">Goldtech Soluções em Tecnologia</div>
+      <h1>Diagnóstico Executivo de Segurança</h1>
+      <p class="subtitle">Relatório de apoio à decisão com pontos de atenção observados no ambiente analisado.</p>
+      <div class="meta">
+        <div><label>Cliente</label><strong>${escapeHtml(clientName)}</strong></div>
+        <div><label>Host analisado</label><strong>${escapeHtml(hostName)}</strong></div>
+        <div><label>Data da coleta</label><strong>${escapeHtml(collectedAt)}</strong></div>
+        <div><label>Data de geração</label><strong>${escapeHtml(generatedAt)}</strong></div>
+        <div><label>Versão do scanner</label><strong>${escapeHtml(scannerVersion)}</strong></div>
+      </div>
+    </header>
+
+    <section class="card notice">
+      <h2>Aviso técnico</h2>
+      <p>Este relatório não confirma infecção, invasão ou presença de malware. O objetivo é apresentar pontos de atenção identificados no ambiente analisado, apoiando a validação técnica e a tomada de decisão.</p>
+    </section>
+
+    <section class="executive-grid">
+      <div class="card">
+        <div class="section-kicker">Visão executiva</div>
+        <h2>Resumo executivo</h2>
+        ${renderList(executiveSummary, 'Resumo executivo não disponível.')}
+      </div>
+      <div class="card level">
+        <div>
+          <span class="level-label">Nível geral de atenção</span>
+          <strong>${escapeHtml(attentionLevel)}</strong>
+          <div class="score">Score: ${escapeHtml(riskScore)}</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-kicker">Indicadores principais</div>
+      <h2>Indicadores do diagnóstico</h2>
+      <div class="metrics">
+        ${indicators.map(([label, value]) => `<div class="metric card"><label>${escapeHtml(label)}</label><strong>${escapeHtml(formatReportValue(value, '0'))}</strong></div>`).join('')}
+      </div>
+    </section>
+
+    <section>
+      <div class="section-kicker">Pontos de atenção</div>
+      <h2>Principais pontos de atenção</h2>
+      <div class="points">
+        ${renderPointCard(
+          'Portas de rede que exigem validação',
+          summary.attentionPortsCount,
+          'Portas em escuta foram destacadas quando pertencem a uma lista conservadora de serviços que merecem revisão.'
+        )}
+        ${renderPointCard(
+          'Processos administrativos ou sensíveis observados',
+          summary.sensitiveProcessesCount,
+          'Ferramentas ou processos de administração podem ser esperados, mas devem ser confirmados com a equipe responsável.'
+        )}
+        ${renderPointCard(
+          'Conexões externas que devem ser revisadas',
+          summary.externalConnectionsCount,
+          'Conexões para destinos externos devem ser avaliadas conforme o perfil normal de uso do equipamento.'
+        )}
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-kicker">Orientação inicial</div>
+      <h2>Recomendações iniciais</h2>
+      ${renderList(recommendations, 'Nenhuma recomendação inicial disponível.')}
+    </section>
+
+    <section>
+      <div class="section-kicker">Detalhes técnicos resumidos</div>
+      <h2>Portas de rede que exigem validação</h2>
+      <table>
+        <thead><tr><th>Porta</th><th>Serviço/Processo</th><th>Origem local</th><th>Interpretação</th></tr></thead>
+        <tbody>${renderRows(analysis.attentionPorts, [
+          { value: (item) => item.port },
+          { value: (item) => item.process },
+          { value: (item) => item.localAddress },
+          { value: (item) => item.reason || 'Ponto de atenção que requer validação técnica.' }
+        ], 'Nenhuma porta da lista conservadora de validação foi identificada.')}</tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Processos administrativos ou sensíveis observados</h2>
+      <table>
+        <thead><tr><th>Processo</th><th>PID</th><th>Caminho</th><th>Interpretação</th></tr></thead>
+        <tbody>${renderRows(analysis.sensitiveProcesses, [
+          { value: (item) => item.name },
+          { value: (item) => item.pid },
+          { value: (item) => item.path || 'Não informado' },
+          { value: (item) => item.reason || 'Processo administrativo ou sensível que requer validação técnica.' }
+        ], 'Nenhum processo administrativo ou sensível foi destacado.')}</tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Conexões externas que devem ser revisadas</h2>
+      <table>
+        <thead><tr><th>Processo</th><th>Destino</th><th>Porta</th><th>Observação</th></tr></thead>
+        <tbody>${renderRows(analysis.externalConnections, [
+          { value: (item) => item.process },
+          { value: (item) => item.remoteAddress },
+          { value: (item) => item.remotePort },
+          { value: (item) => item.state || 'Revisão recomendada conforme o padrão esperado do ambiente.' }
+        ], 'Nenhuma conexão externa relevante foi destacada.')}</tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Observações técnicas</h2>
+      ${renderList(technicalNotes, 'Nenhuma observação técnica adicional disponível.')}
+    </section>
+
+    <section class="card">
+      <h2>Próximos passos sugeridos</h2>
+      ${renderList(nextSteps, 'Nenhum próximo passo sugerido.')}
+    </section>
+
+    <footer>Relatório gerado pelo Goldtech Network Behavior Scanner. Uso técnico e executivo. Não substitui antivírus, EDR, análise forense ou auditoria completa de segurança.</footer>
+  </main>
+</body>
+</html>`;
+}
+
+async function generatePdfFromHtml(html) {
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.emulateMediaType('print');
+
+    return await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: {
+        top: '14mm',
+        bottom: '14mm',
+        left: '12mm',
+        right: '12mm'
+      }
+    });
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
+}
+
 module.exports = {
   analyzeScannerResult,
   buildSummary,
+  buildReportFilename,
+  buildReportPdfFilename,
   calculateBufferSha256,
   detectJsonEncoding,
   deleteResultFile,
@@ -677,8 +1015,10 @@ module.exports = {
   getFirstBytesHex,
   getResultsStorageRoot,
   getJsonContentPreview,
+  generatePdfFromHtml,
   parseJsonBuffer,
   readJsonFileFlexible,
+  renderSecurityDiagnosticReportHtml,
   saveResultFile,
   sanitizeFilename
 };

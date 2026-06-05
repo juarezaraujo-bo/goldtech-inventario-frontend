@@ -98,6 +98,15 @@ function getPackageField(pkg, names, fallback = '-') {
   return fallback;
 }
 
+function sanitizeFilenamePart(value) {
+  return String(value || 'host')
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'host';
+}
+
 function formatJson(value) {
   if (!value) return '-';
   if (typeof value === 'string') {
@@ -179,6 +188,8 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
   const [downloadingId, setDownloadingId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
   const [downloadingResultId, setDownloadingResultId] = useState(null);
+  const [downloadingReportId, setDownloadingReportId] = useState(null);
+  const [downloadingPdfId, setDownloadingPdfId] = useState(null);
   const [deletingResultId, setDeletingResultId] = useState(null);
   const resultFileInputRef = useRef(null);
 
@@ -429,6 +440,64 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
       toast.error(err.response?.data?.message || 'Erro ao baixar resultado JSON.');
     } finally {
       setDownloadingResultId(null);
+    }
+  };
+
+  const handleDownloadReport = async (result) => {
+    const resultId = getPackageField(result, ['id', 'result_id']);
+    const hostName = getPackageField(result, ['host_name', 'hostName', 'host'], 'host');
+    const safeHostName = sanitizeFilenamePart(hostName);
+    const filename = `relatorio-diagnostico-${safeHostName}-${resultId}.html`;
+
+    setDownloadingReportId(resultId);
+    try {
+      const { data } = await api.get(
+        `/clients/${clientId}/security-diagnostic/results/${resultId}/report`,
+        { responseType: 'blob' }
+      );
+
+      const url = window.URL.createObjectURL(new Blob([data], { type: 'text/html' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Relatório gerado com sucesso.');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Erro ao gerar relatório.');
+    } finally {
+      setDownloadingReportId(null);
+    }
+  };
+
+  const handleDownloadReportPdf = async (result) => {
+    const resultId = getPackageField(result, ['id', 'result_id']);
+    const hostName = getPackageField(result, ['host_name', 'hostName', 'host'], 'host');
+    const safeHostName = sanitizeFilenamePart(hostName);
+    const filename = `diagnostico-seguranca-${safeHostName}-${resultId}.pdf`;
+
+    setDownloadingPdfId(resultId);
+    try {
+      const { data } = await api.get(
+        `/clients/${clientId}/security-diagnostic/results/${resultId}/report/pdf`,
+        { responseType: 'blob' }
+      );
+
+      const url = window.URL.createObjectURL(new Blob([data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Relatório PDF gerado com sucesso.');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Erro ao gerar relatório PDF.');
+    } finally {
+      setDownloadingPdfId(null);
     }
   };
 
@@ -775,6 +844,24 @@ export default function SecurityDiagnosticPanel({ clientId, clientName }) {
                           >
                             {downloadingResultId === resultId ? <Loader className="animate-spin" size={16} /> : <Download size={16} />}
                             Baixar
+                          </button>
+                          <button
+                            onClick={() => handleDownloadReport(result)}
+                            disabled={downloadingReportId === resultId}
+                            title="Baixar relatório HTML"
+                            style={{ ...actionButtonStyle, color: 'var(--accent-emerald)' }}
+                          >
+                            {downloadingReportId === resultId ? <Loader className="animate-spin" size={16} /> : <FileJson size={16} />}
+                            HTML
+                          </button>
+                          <button
+                            onClick={() => handleDownloadReportPdf(result)}
+                            disabled={downloadingPdfId === resultId}
+                            title="Baixar relatório PDF"
+                            style={{ ...actionButtonStyle, color: 'var(--primary-gold)' }}
+                          >
+                            {downloadingPdfId === resultId ? <Loader className="animate-spin" size={16} /> : <Download size={16} />}
+                            PDF
                           </button>
                           <button
                             onClick={() => handleDeleteResult(result)}

@@ -499,6 +499,84 @@ router.get('/clients/:clientId/security-diagnostic/results/:resultId/analysis', 
 });
 
 /**
+ * GET /api/clients/:clientId/security-diagnostic/results/:resultId/report
+ * Gera um relatorio HTML executivo/tecnico sob demanda.
+ */
+router.get('/clients/:clientId/security-diagnostic/results/:resultId/report', checkClientExists, async (req, res) => {
+  const { resultId } = req.params;
+  try {
+    const result = await queryGet('SELECT * FROM scanner_diagnostic_results WHERE id = ? AND client_id = ?', [resultId, req.client.id]);
+    if (!result) {
+      return res.status(404).json({ message: 'Resultado nao encontrado.' });
+    }
+
+    const absolutePath = path.resolve(result.file_path);
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ message: 'Arquivo fisico do resultado nao encontrado no servidor.' });
+    }
+
+    const analysis = scannerResultService.analyzeScannerResult(result);
+    const html = scannerResultService.renderSecurityDiagnosticReportHtml({
+      client: req.client,
+      analysis,
+      result
+    });
+    const filename = scannerResultService.buildReportFilename(req.client, analysis);
+
+    res.set({
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': Buffer.byteLength(html, 'utf8')
+    });
+
+    return res.send(html);
+  } catch (error) {
+    console.error('Erro ao gerar relatorio do scanner:', error);
+    return res.status(500).json({ message: 'Erro interno ao gerar relatorio.' });
+  }
+});
+
+/**
+ * GET /api/clients/:clientId/security-diagnostic/results/:resultId/report/pdf
+ * Gera um PDF executivo/tecnico sob demanda a partir do HTML do relatorio.
+ */
+router.get('/clients/:clientId/security-diagnostic/results/:resultId/report/pdf', checkClientExists, async (req, res) => {
+  const { resultId } = req.params;
+  try {
+    const result = await queryGet('SELECT * FROM scanner_diagnostic_results WHERE id = ? AND client_id = ?', [resultId, req.client.id]);
+    if (!result) {
+      return res.status(404).json({ message: 'Resultado nao encontrado.' });
+    }
+
+    const absolutePath = path.resolve(result.file_path);
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ message: 'Arquivo fisico do resultado nao encontrado no servidor.' });
+    }
+
+    const analysis = scannerResultService.analyzeScannerResult(result);
+    const html = scannerResultService.renderSecurityDiagnosticReportHtml({
+      client: req.client,
+      analysis,
+      result
+    });
+    const pdf = await scannerResultService.generatePdfFromHtml(html);
+    const pdfBuffer = Buffer.isBuffer(pdf) ? pdf : Buffer.from(pdf);
+    const filename = scannerResultService.buildReportPdfFilename(req.client, analysis);
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': pdfBuffer.length
+    });
+
+    return res.send(pdfBuffer);
+  } catch (error) {
+    console.error('Erro ao gerar PDF do relatorio do scanner:', error);
+    return res.status(500).json({ message: 'Erro interno ao gerar PDF do relatorio.' });
+  }
+});
+
+/**
  * GET /api/clients/:clientId/security-diagnostic/results/:resultId
  * Retorna detalhes de um resultado enviado manualmente.
  */
