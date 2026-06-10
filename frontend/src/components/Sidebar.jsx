@@ -8,11 +8,11 @@ import {
   FileText,
   Settings,
   LogOut,
-  ShieldCheck,
   User,
   UserCog
 } from 'lucide-react';
 import { getRoleLabel, isAdminRole } from '../utils/roles';
+import logoGoldtech from '../assets/logo-goldtech.png';
 
 export default function Sidebar() {
   const navigate = useNavigate();
@@ -29,12 +29,12 @@ export default function Sidebar() {
   const menuItems = [
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
     { name: 'Clientes', path: '/clientes', icon: Users },
-    { name: 'Invent\u00e1rio Geral', path: '/equipamentos', icon: Package },
-    { name: 'Documenta\u00e7\u00e3o', path: '/intranet', icon: BookOpen },
+    { name: 'Inventário Geral', path: '/equipamentos', icon: Package },
+    { name: 'Documentação', path: '/intranet', icon: BookOpen },
     { name: 'Conhecimento', path: '/conhecimento', icon: GraduationCap },
     { name: 'Monitoramento', path: '/relatorios', icon: FileText },
-    ...(isAdmin ? [{ name: 'Usu\u00e1rios', path: '/usuarios', icon: UserCog }] : []),
-    { name: 'Configura\u00e7\u00f5es', path: '/configuracoes', icon: Settings },
+    ...(isAdmin ? [{ name: 'Usuários', path: '/usuarios', icon: UserCog }] : []),
+    { name: 'Configurações', path: '/configuracoes', icon: Settings },
   ];
 
   return (
@@ -51,29 +51,12 @@ export default function Sidebar() {
       top: 0,
       zIndex: 100
     }} className="hidden lg:flex">
-      <div style={{ marginBottom: '3.5rem', padding: '0 0.5rem' }}>
-        <div className="flex items-center gap-3">
-          <div style={{
-            width: '44px',
-            height: '44px',
-            background: 'rgba(212, 175, 55, 0.1)',
-            borderRadius: '12px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'var(--primary-gold)',
-            boxShadow: '0 0 20px rgba(212, 175, 55, 0.1)'
-          }}>
-            <ShieldCheck size={28} strokeWidth={2.5} />
-          </div>
-          <div>
-            <span style={{ display: 'block', fontSize: '1.25rem', fontWeight: 800, color: '#fff', letterSpacing: '-0.5px' }}>GOLDTECH</span>
-            <span style={{ display: 'block', fontSize: '0.65rem', fontWeight: 800, color: 'var(--primary-gold)', letterSpacing: '2px', marginTop: '-2px' }}>INVENT\u00c1RIO</span>
-          </div>
-        </div>
+      <div className="sidebar-brand">
+        <img src={logoGoldtech} alt="Goldtech" className="sidebar-logo" />
+        <span className="sidebar-brand-subtitle">INVENTÁRIO</span>
       </div>
 
-      <nav style={{ flex: 1 }}>
+      <nav className="sidebar-nav">
         <p style={{ fontSize: '0.7rem', fontWeight: 800, color: 'rgba(255,255,255,0.2)', textTransform: 'uppercase', letterSpacing: '1.5px', marginBottom: '1.5rem', paddingLeft: '1rem' }}>
           Sistema
         </p>
