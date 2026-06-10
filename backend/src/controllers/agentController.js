@@ -1,5 +1,6 @@
 const { db } = require('../models/db');
 const { classifyObsolescence } = require('../utils/obsolescenceUtils');
+const { classifyNetworkAsset, cleanText, normalizeOpenPorts } = require('../utils/networkAssetClassifier');
 const crypto = require('crypto');
 
 const CPU_CRITICAL_PERCENT = Number(process.env.MONITOR_CPU_CRITICAL_PERCENT || 90);
@@ -7,6 +8,18 @@ const MEMORY_CRITICAL_PERCENT = Number(process.env.MONITOR_MEMORY_CRITICAL_PERCE
 const DISK_FREE_CRITICAL_PERCENT = Number(process.env.MONITOR_DISK_FREE_CRITICAL_PERCENT || 10);
 const PERSISTENT_ALERT_SAMPLES = Number(process.env.MONITOR_PERSISTENT_ALERT_SAMPLES || 3);
 const HELPDESK_SYSTEM_USER_ID = Number(process.env.HELPDESK_SYSTEM_USER_ID || 1);
+const NETWORK_DEVICE_TYPES = new Set(['workstation', 'server', 'printer', 'network_device', 'media_device', 'unknown']);
+
+const dbGet = (sql, params = []) => new Promise((resolve, reject) => {
+  db.get(sql, params, (err, row) => err ? reject(err) : resolve(row));
+});
+
+const dbRun = (sql, params = []) => new Promise((resolve, reject) => {
+  db.run(sql, params, function(err) {
+    if (err) reject(err);
+    else resolve(this);
+  });
+});
 
 exports.test = (req, res) => {
   res.json({ status: 'active', message: 'Goldtech Agent API is online' });
@@ -97,6 +110,46 @@ exports.collectPerformance = (req, res) => {
       res.json({ success: true, message: 'Dados de performance salvos' });
     });
   });
+};
+
+/**
+ * Coleta de ativos descobertos na rede local.
+ * Separada da coleta de performance.
+ */
+exports.collectNetworkDiscovery = async (req, res) => {
+  try {
+    const data = req.body || {};
+    const assets = Array.isArray(data.assets) ? data.assets : [];
+
+    if (!assets.length) {
+      return res.status(400).json({ message: 'Nenhum ativo de rede enviado.' });
+    }
+
+    const clientId = await resolveNetworkDiscoveryClientId(data);
+    const collectedAt = normalizeDate(data.collected_at) || new Date().toISOString();
+    const counters = { inserted: 0, updated: 0, skipped: 0 };
+
+    for (const asset of assets) {
+      const normalized = normalizeNetworkAsset(asset, collectedAt);
+      if (!normalized.ip_address) {
+        counters.skipped += 1;
+        continue;
+      }
+
+      const result = await upsertNetworkAsset(clientId, normalized);
+      counters[result] += 1;
+    }
+
+    return res.json({
+      success: true,
+      message: 'Descoberta de rede processada com sucesso.',
+      processed: assets.length,
+      ...counters
+    });
+  } catch (error) {
+    console.error(`[NETWORK-DISCOVERY] Falha ao processar coleta: ${error.message}`);
+    return res.status(500).json({ message: 'Falha ao processar descoberta de rede.' });
+  }
 };
 
 /**
@@ -263,6 +316,257 @@ async function createPerformanceTicket(hostname, clientId, alertType, motivo, ac
   }
 
   return null;
+}
+
+async function resolveNetworkDiscoveryClientId(data) {
+  const explicitClientId = Number(data.client_id || data.clientId);
+  if (explicitClientId) {
+    const client = await dbGet('SELECT id, status FROM clients WHERE id = ?', [explicitClientId]);
+    if (!client) throw new Error('Cliente informado nao encontrado.');
+    if (client.status === 'Inativo') {
+      await dbRun("UPDATE clients SET status = 'Ativo' WHERE id = ?", [client.id]);
+    }
+    return client.id;
+  }
+
+  const clientName = String(data.cliente || data.client_name || data.clientName || 'Padrao').trim() || 'Padrao';
+  const client = await dbGet(
+    'SELECT id, status FROM clients WHERE lower(trim(name)) = lower(trim(?))',
+    [clientName]
+  );
+
+  if (!client) {
+    const created = await dbRun("INSERT INTO clients (name, status) VALUES (?, 'Ativo')", [clientName]);
+    return created.lastID;
+  }
+
+  if (client.status === 'Inativo') {
+    await dbRun("UPDATE clients SET status = 'Ativo' WHERE id = ?", [client.id]);
+  }
+
+  return client.id;
+}
+
+function normalizeDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function normalizeMac(mac) {
+  if (!mac) return null;
+  const clean = String(mac).replace(/[^0-9a-f]/gi, '').toUpperCase();
+  if (clean.length < 12) return null;
+  return clean.slice(0, 12).match(/.{1,2}/g).join(':');
+}
+
+function normalizeNetworkAsset(asset, collectedAt) {
+  asset = asset || {};
+  const openPorts = normalizeOpenPorts(asset.open_ports || asset.openPorts);
+  const classified = classifyNetworkAsset({
+    ...asset,
+    open_ports: openPorts,
+    printer_model: asset.printer_model || asset.printerModel,
+    detection_method: asset.detection_method || asset.detectionMethod
+  });
+  const detectionMethod = appendDetectionMethods(
+    nullableText(asset.detection_method || asset.detectionMethod),
+    classified.device_type === 'media_device' ? ['probable-iot', 'probable-media-device'] : []
+  );
+
+  return {
+    ip_address: String(asset.ip_address || asset.ipAddress || asset.ip || '').trim(),
+    mac_address: normalizeMac(asset.mac_address || asset.macAddress || asset.mac),
+    hostname: nullableText(asset.hostname || asset.host_name || asset.hostName),
+    vendor: cleanText(asset.vendor),
+    device_type: NETWORK_DEVICE_TYPES.has(classified.device_type) ? classified.device_type : 'unknown',
+    printer_model: classified.printer_model,
+    open_ports: JSON.stringify(classified.open_ports),
+    detection_method: detectionMethod,
+    is_collector: Boolean(asset.is_collector || asset.isCollector),
+    collector_hostname: nullableText(asset.collector_hostname || asset.collectorHostname),
+    local_ip: nullableText(asset.local_ip || asset.localIp),
+    interface_alias: nullableText(asset.interface_alias || asset.interfaceAlias),
+    last_seen: collectedAt,
+    status: nullableText(asset.status) || 'active',
+    notes: nullableText(asset.notes)
+  };
+}
+
+function appendDetectionMethods(current, methods = []) {
+  const parts = String(current || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  for (const method of methods) {
+    if (method && !parts.includes(method)) parts.push(method);
+  }
+  return parts.length ? parts.join(', ') : null;
+}
+
+function nullableText(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
+async function findExistingNetworkAsset(clientId, asset) {
+  if (asset.mac_address) {
+    const byMac = await dbGet(
+      `SELECT id FROM network_discovered_assets
+       WHERE client_id = ? AND lower(mac_address) = lower(?)
+       LIMIT 1`,
+      [clientId, asset.mac_address]
+    );
+    if (byMac) return byMac;
+  }
+
+  return dbGet(
+    `SELECT id FROM network_discovered_assets
+     WHERE client_id = ? AND ip_address = ?
+     LIMIT 1`,
+    [clientId, asset.ip_address]
+  );
+}
+
+async function upsertNetworkAsset(clientId, asset) {
+  const matchedEquipment = await findMatchingEquipmentForNetworkAsset(clientId, asset);
+  if (matchedEquipment) {
+    asset.hostname = asset.hostname || matchedEquipment.nome || null;
+    asset.vendor = asset.vendor || matchedEquipment.fabricante || null;
+    if ((!asset.device_type || asset.device_type === 'unknown') && deviceTypeFromEquipment(matchedEquipment)) {
+      asset.device_type = deviceTypeFromEquipment(matchedEquipment);
+    }
+    if (asset.device_type === 'printer' || asset.device_type === 'media_device') {
+      asset.printer_model = asset.printer_model || matchedEquipment.modelo || null;
+    }
+  }
+
+  const existing = await findExistingNetworkAsset(clientId, asset);
+  const params = [
+    asset.ip_address,
+    asset.mac_address,
+    asset.hostname,
+    asset.vendor,
+    asset.device_type,
+    asset.printer_model,
+    asset.open_ports,
+    asset.detection_method,
+    asset.is_collector ? 1 : 0,
+    asset.collector_hostname,
+    asset.local_ip,
+    asset.interface_alias,
+    matchedEquipment ? 1 : 0,
+    matchedEquipment ? matchedEquipment.id : null,
+    asset.last_seen,
+    asset.status,
+    asset.notes
+  ];
+
+  if (existing) {
+    await dbRun(
+      `UPDATE network_discovered_assets SET
+        ip_address = ?,
+        mac_address = COALESCE(?, mac_address),
+        hostname = ?,
+        vendor = ?,
+        device_type = ?,
+        printer_model = ?,
+        open_ports = ?,
+        detection_method = ?,
+        is_collector = CASE WHEN ? = 1 THEN 1 ELSE is_collector END,
+        collector_hostname = COALESCE(?, collector_hostname),
+        local_ip = COALESCE(?, local_ip),
+        interface_alias = COALESCE(?, interface_alias),
+        already_in_inventory = ?,
+        equipment_id = ?,
+        last_seen = ?,
+        status = ?,
+        notes = ?
+       WHERE id = ?`,
+      [...params, existing.id]
+    );
+    return 'updated';
+  }
+
+  await dbRun(
+    `INSERT INTO network_discovered_assets (
+      client_id, ip_address, mac_address, hostname, vendor, device_type,
+      printer_model, open_ports, detection_method, is_collector,
+      collector_hostname, local_ip, interface_alias, already_in_inventory,
+      equipment_id, first_seen, last_seen, status, notes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      clientId,
+      asset.ip_address,
+      asset.mac_address,
+      asset.hostname,
+      asset.vendor,
+      asset.device_type,
+      asset.printer_model,
+      asset.open_ports,
+      asset.detection_method,
+      asset.is_collector ? 1 : 0,
+      asset.collector_hostname,
+      asset.local_ip,
+      asset.interface_alias,
+      matchedEquipment ? 1 : 0,
+      matchedEquipment ? matchedEquipment.id : null,
+      asset.last_seen,
+      asset.last_seen,
+      asset.status,
+      asset.notes
+    ]
+  );
+
+  return 'inserted';
+}
+
+function normalizeCompare(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeMacCompare(value) {
+  return String(value || '').replace(/[^0-9a-f]/gi, '').toUpperCase();
+}
+
+function deviceTypeFromEquipment(equipment) {
+  const text = normalizeCompare(`${equipment?.categoria || ''} ${equipment?.tipo || ''}`);
+  if (text.includes('servidor')) return 'server';
+  if (text.includes('impress')) return 'printer';
+  if (text.includes('iot') || text.includes('multim') || text.includes('tv') || text.includes('videogame') || text.includes('streaming')) return 'media_device';
+  if (text.includes('rede') || text.includes('roteador') || text.includes('switch') || text.includes('router')) return 'network_device';
+  if (text.includes('desktop') || text.includes('notebook') || text.includes('laptop') || text.includes('esta')) return 'workstation';
+  return null;
+}
+
+async function findMatchingEquipmentForNetworkAsset(clientId, asset) {
+  const conditions = [];
+  const params = [clientId];
+
+  if (asset.mac_address) {
+    conditions.push("replace(replace(replace(upper(mac), ':', ''), '-', ''), '.', '') = ?");
+    params.push(normalizeMacCompare(asset.mac_address));
+  }
+  if (asset.ip_address) {
+    conditions.push('lower(trim(ip)) = lower(trim(?))');
+    params.push(asset.ip_address);
+  }
+  if (asset.hostname) {
+    conditions.push('lower(trim(nome)) = lower(trim(?))');
+    params.push(asset.hostname);
+  }
+
+  if (!conditions.length) return null;
+
+  return dbGet(
+    `SELECT id, nome, categoria, tipo, fabricante, modelo, ip, mac
+     FROM equipments
+     WHERE client_id = ? AND (${conditions.join(' OR ')})
+     LIMIT 1`,
+    params
+  );
 }
 
 

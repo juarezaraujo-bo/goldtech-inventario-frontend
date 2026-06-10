@@ -111,6 +111,75 @@ const initDb = async () => {
     FOREIGN KEY (equipment_id) REFERENCES equipments (id)
   )`);
 
+  await run(`CREATE TABLE IF NOT EXISTS network_discovered_assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id INTEGER NOT NULL,
+    ip_address TEXT NOT NULL,
+    mac_address TEXT,
+    hostname TEXT,
+    vendor TEXT,
+    device_type TEXT DEFAULT 'unknown',
+    printer_model TEXT,
+    open_ports TEXT,
+    detection_method TEXT,
+    is_collector INTEGER DEFAULT 0,
+    collector_hostname TEXT,
+    local_ip TEXT,
+    interface_alias TEXT,
+    already_in_inventory INTEGER DEFAULT 0,
+    equipment_id INTEGER,
+    documentation_status TEXT DEFAULT 'pending',
+    documentation_ref_id INTEGER,
+    imported_at DATETIME,
+    first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+    status TEXT DEFAULT 'active',
+    notes TEXT,
+    FOREIGN KEY (client_id) REFERENCES clients (id)
+  )`);
+
+  await run(`CREATE INDEX IF NOT EXISTS idx_network_discovered_assets_client
+    ON network_discovered_assets (client_id)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_network_discovered_assets_client_ip
+    ON network_discovered_assets (client_id, ip_address)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_network_discovered_assets_client_mac
+    ON network_discovered_assets (client_id, mac_address)`);
+
+  const networkAssetColumns = await new Promise((resolve, reject) => {
+    db.all(`PRAGMA table_info(network_discovered_assets)`, [], (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows.map((row) => row.name));
+    });
+  });
+
+  if (!networkAssetColumns.includes('documentation_status')) {
+    await run(`ALTER TABLE network_discovered_assets ADD COLUMN documentation_status TEXT DEFAULT 'pending'`);
+  }
+  if (!networkAssetColumns.includes('documentation_ref_id')) {
+    await run(`ALTER TABLE network_discovered_assets ADD COLUMN documentation_ref_id INTEGER`);
+  }
+  if (!networkAssetColumns.includes('imported_at')) {
+    await run(`ALTER TABLE network_discovered_assets ADD COLUMN imported_at DATETIME`);
+  }
+  if (!networkAssetColumns.includes('is_collector')) {
+    await run(`ALTER TABLE network_discovered_assets ADD COLUMN is_collector INTEGER DEFAULT 0`);
+  }
+  if (!networkAssetColumns.includes('collector_hostname')) {
+    await run(`ALTER TABLE network_discovered_assets ADD COLUMN collector_hostname TEXT`);
+  }
+  if (!networkAssetColumns.includes('local_ip')) {
+    await run(`ALTER TABLE network_discovered_assets ADD COLUMN local_ip TEXT`);
+  }
+  if (!networkAssetColumns.includes('interface_alias')) {
+    await run(`ALTER TABLE network_discovered_assets ADD COLUMN interface_alias TEXT`);
+  }
+  if (!networkAssetColumns.includes('already_in_inventory')) {
+    await run(`ALTER TABLE network_discovered_assets ADD COLUMN already_in_inventory INTEGER DEFAULT 0`);
+  }
+  if (!networkAssetColumns.includes('equipment_id')) {
+    await run(`ALTER TABLE network_discovered_assets ADD COLUMN equipment_id INTEGER`);
+  }
+
   await run(`CREATE TABLE IF NOT EXISTS inventory_tickets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     equipment_id INTEGER,

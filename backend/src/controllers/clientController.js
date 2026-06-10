@@ -1,4 +1,101 @@
 const { db } = require('../models/db');
+const { classifyNetworkAsset } = require('../utils/networkAssetClassifier');
+
+function ensureNetworkDiscoveredAssetsTable(callback) {
+  db.serialize(() => {
+    db.run(`CREATE TABLE IF NOT EXISTS network_discovered_assets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL,
+      ip_address TEXT NOT NULL,
+      mac_address TEXT,
+      hostname TEXT,
+      vendor TEXT,
+      device_type TEXT DEFAULT 'unknown',
+      printer_model TEXT,
+      open_ports TEXT,
+      detection_method TEXT,
+      is_collector INTEGER DEFAULT 0,
+      collector_hostname TEXT,
+      local_ip TEXT,
+      interface_alias TEXT,
+      already_in_inventory INTEGER DEFAULT 0,
+      equipment_id INTEGER,
+      documentation_status TEXT DEFAULT 'pending',
+      documentation_ref_id INTEGER,
+      imported_at DATETIME,
+      first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+      status TEXT DEFAULT 'active',
+      notes TEXT,
+      FOREIGN KEY (client_id) REFERENCES clients (id)
+    )`, (err) => {
+      if (err) return callback(err);
+
+      db.run(`CREATE INDEX IF NOT EXISTS idx_network_discovered_assets_client
+        ON network_discovered_assets (client_id)`, (indexErr) => {
+        if (indexErr) return callback(indexErr);
+
+        db.run(`CREATE INDEX IF NOT EXISTS idx_network_discovered_assets_client_ip
+          ON network_discovered_assets (client_id, ip_address)`, (ipIndexErr) => {
+          if (ipIndexErr) return callback(ipIndexErr);
+
+          db.run(`CREATE INDEX IF NOT EXISTS idx_network_discovered_assets_client_mac
+            ON network_discovered_assets (client_id, mac_address)`, (macIndexErr) => {
+            if (macIndexErr) return callback(macIndexErr);
+            ensureNetworkDiscoveryImportColumns(callback);
+          });
+        });
+      });
+    });
+  });
+}
+
+function ensureNetworkDiscoveryImportColumns(callback) {
+  db.all(`PRAGMA table_info(network_discovered_assets)`, [], (err, rows = []) => {
+    if (err) return callback(err);
+
+    const columns = new Set(rows.map((row) => row.name));
+    const statements = [];
+    if (!columns.has('documentation_status')) {
+      statements.push(`ALTER TABLE network_discovered_assets ADD COLUMN documentation_status TEXT DEFAULT 'pending'`);
+    }
+    if (!columns.has('documentation_ref_id')) {
+      statements.push(`ALTER TABLE network_discovered_assets ADD COLUMN documentation_ref_id INTEGER`);
+    }
+    if (!columns.has('imported_at')) {
+      statements.push(`ALTER TABLE network_discovered_assets ADD COLUMN imported_at DATETIME`);
+    }
+    if (!columns.has('is_collector')) {
+      statements.push(`ALTER TABLE network_discovered_assets ADD COLUMN is_collector INTEGER DEFAULT 0`);
+    }
+    if (!columns.has('collector_hostname')) {
+      statements.push(`ALTER TABLE network_discovered_assets ADD COLUMN collector_hostname TEXT`);
+    }
+    if (!columns.has('local_ip')) {
+      statements.push(`ALTER TABLE network_discovered_assets ADD COLUMN local_ip TEXT`);
+    }
+    if (!columns.has('interface_alias')) {
+      statements.push(`ALTER TABLE network_discovered_assets ADD COLUMN interface_alias TEXT`);
+    }
+    if (!columns.has('already_in_inventory')) {
+      statements.push(`ALTER TABLE network_discovered_assets ADD COLUMN already_in_inventory INTEGER DEFAULT 0`);
+    }
+    if (!columns.has('equipment_id')) {
+      statements.push(`ALTER TABLE network_discovered_assets ADD COLUMN equipment_id INTEGER`);
+    }
+
+    const runNext = () => {
+      const statement = statements.shift();
+      if (!statement) return callback();
+      db.run(statement, (alterErr) => {
+        if (alterErr) return callback(alterErr);
+        runNext();
+      });
+    };
+
+    runNext();
+  });
+}
 
 exports.getAll = (req, res) => {
   const query = `
@@ -123,6 +220,475 @@ exports.getInventoryStats = (req, res) => {
   });
 };
 
+exports.getNetworkDiscoveredAssets = (req, res) => {
+  const { id } = req.params;
+  const clientId = Number(id);
+
+  if (!clientId) {
+    return res.status(400).json({ message: 'Cliente invalido.' });
+  }
+
+  const query = `
+    SELECT
+      id,
+      client_id,
+      ip_address,
+      mac_address,
+      hostname,
+      vendor,
+      device_type,
+      printer_model,
+      open_ports,
+      detection_method,
+      is_collector,
+      collector_hostname,
+      local_ip,
+      interface_alias,
+      already_in_inventory,
+      equipment_id,
+      documentation_status,
+      documentation_ref_id,
+      imported_at,
+      first_seen,
+      last_seen,
+      status,
+      notes
+    FROM network_discovered_assets
+    WHERE client_id = ?
+    ORDER BY datetime(last_seen) DESC, ip_address ASC
+  `;
+
+  ensureNetworkDiscoveredAssetsTable((tableErr) => {
+    if (tableErr) {
+      console.error(`[NETWORK-ASSETS] Falha ao garantir tabela: ${tableErr.message}`);
+      return res.status(500).json({ message: 'Falha ao carregar ativos descobertos.' });
+    }
+
+    db.all(query, [clientId], (err, rows = []) => {
+      if (err) {
+        console.error(`[NETWORK-ASSETS] Falha ao listar ativos do cliente ${clientId}: ${err.message}`);
+        return res.status(500).json({ message: 'Falha ao carregar ativos descobertos.' });
+      }
+
+      const assets = rows.map((row) => {
+        let openPorts = [];
+        try {
+          openPorts = row.open_ports ? JSON.parse(row.open_ports) : [];
+        } catch {
+          openPorts = [];
+        }
+
+        const classified = classifyNetworkAsset({
+          ...row,
+          open_ports: openPorts
+        });
+
+        const normalizedOpenPortsJson = JSON.stringify(classified.open_ports);
+        const currentOpenPortsJson = JSON.stringify(Array.isArray(openPorts) ? openPorts : []);
+        const detectionMethod = appendDetectionMethods(
+          row.detection_method,
+          classified.device_type === 'media_device' ? ['probable-iot', 'probable-media-device'] : []
+        );
+        if (
+          row.device_type !== classified.device_type ||
+          (row.printer_model || null) !== (classified.printer_model || null) ||
+          currentOpenPortsJson !== normalizedOpenPortsJson ||
+          (row.detection_method || null) !== (detectionMethod || null)
+        ) {
+          db.run(
+            `UPDATE network_discovered_assets
+             SET device_type = ?, printer_model = ?, open_ports = ?, detection_method = ?
+             WHERE id = ?`,
+            [classified.device_type, classified.printer_model, normalizedOpenPortsJson, detectionMethod, row.id],
+            (updateErr) => {
+              if (updateErr) {
+                console.error(`[NETWORK-ASSETS] Falha ao reclassificar ativo ${row.id}: ${updateErr.message}`);
+              }
+            }
+          );
+        }
+
+        return {
+          ...row,
+          device_type: classified.device_type,
+          printer_model: classified.printer_model,
+          open_ports: classified.open_ports,
+          detection_method: detectionMethod,
+          is_collector: Boolean(row.is_collector),
+          already_in_inventory: Boolean(row.already_in_inventory || row.equipment_id)
+        };
+      });
+
+      correlateNetworkAssetsWithInventory(clientId, assets, (correlationErr, enrichedAssets) => {
+        if (correlationErr) {
+          console.error(`[NETWORK-ASSETS] Falha ao cruzar inventario do cliente ${clientId}: ${correlationErr.message}`);
+          return res.status(500).json({ message: 'Falha ao carregar ativos descobertos.' });
+        }
+
+        res.json(enrichedAssets);
+      });
+    });
+  });
+};
+
+function appendDetectionMethods(current, methods = []) {
+  const parts = String(current || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  for (const method of methods) {
+    if (method && !parts.includes(method)) parts.push(method);
+  }
+  return parts.length ? parts.join(', ') : null;
+}
+
+function normalizeCompare(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeMacCompare(value) {
+  return String(value || '').replace(/[^0-9a-f]/gi, '').toUpperCase();
+}
+
+function deviceTypeFromEquipment(equipment) {
+  const text = normalizeCompare(`${equipment?.categoria || ''} ${equipment?.tipo || ''}`);
+  if (text.includes('servidor')) return 'server';
+  if (text.includes('impress')) return 'printer';
+  if (text.includes('iot') || text.includes('multim') || text.includes('tv') || text.includes('videogame') || text.includes('streaming')) return 'media_device';
+  if (text.includes('rede') || text.includes('roteador') || text.includes('switch') || text.includes('router')) return 'network_device';
+  if (text.includes('desktop') || text.includes('notebook') || text.includes('laptop') || text.includes('esta')) return 'workstation';
+  return null;
+}
+
+function findEquipmentMatch(asset, equipments) {
+  const assetMac = normalizeMacCompare(asset.mac_address);
+  const assetIp = normalizeCompare(asset.ip_address);
+  const assetHost = normalizeCompare(asset.hostname);
+
+  return equipments.find((equipment) => {
+    const equipmentMac = normalizeMacCompare(equipment.mac);
+    const equipmentIp = normalizeCompare(equipment.ip);
+    const equipmentHost = normalizeCompare(equipment.nome);
+
+    return (
+      (assetMac && equipmentMac && assetMac === equipmentMac) ||
+      (assetIp && equipmentIp && assetIp === equipmentIp) ||
+      (assetHost && equipmentHost && assetHost === equipmentHost)
+    );
+  }) || null;
+}
+
+function correlateNetworkAssetsWithInventory(clientId, assets, callback) {
+  db.all(
+    `SELECT id, nome, categoria, tipo, fabricante, modelo, ip, mac
+     FROM equipments
+     WHERE client_id = ?`,
+    [clientId],
+    (err, equipments = []) => {
+      if (err) return callback(err);
+
+      const enrichedAssets = assets.map((asset) => {
+        const match = findEquipmentMatch(asset, equipments);
+        if (!match) {
+          if (asset.already_in_inventory || asset.equipment_id) {
+            db.run(
+              `UPDATE network_discovered_assets
+               SET already_in_inventory = 0, equipment_id = NULL
+               WHERE id = ?`,
+              [asset.id]
+            );
+          }
+          return {
+            ...asset,
+            already_in_inventory: false,
+            equipment_id: null
+          };
+        }
+
+        const enriched = {
+          ...asset,
+          hostname: asset.hostname || match.nome || null,
+          vendor: asset.vendor || match.fabricante || null,
+          printer_model: asset.printer_model || (['printer', 'media_device'].includes(asset.device_type) ? match.modelo : null),
+          device_type: asset.device_type && asset.device_type !== 'unknown'
+            ? asset.device_type
+            : (deviceTypeFromEquipment(match) || asset.device_type || 'unknown'),
+          already_in_inventory: true,
+          equipment_id: match.id
+        };
+
+        db.run(
+          `UPDATE network_discovered_assets
+           SET hostname = COALESCE(NULLIF(hostname, ''), ?),
+               vendor = COALESCE(NULLIF(vendor, ''), ?),
+               device_type = CASE WHEN device_type IS NULL OR device_type = '' OR device_type = 'unknown' THEN ? ELSE device_type END,
+               printer_model = COALESCE(NULLIF(printer_model, ''), ?),
+               already_in_inventory = 1,
+               equipment_id = ?
+           WHERE id = ?`,
+          [
+            match.nome || null,
+            match.fabricante || null,
+            deviceTypeFromEquipment(match) || enriched.device_type || 'unknown',
+            ['printer', 'media_device'].includes(enriched.device_type) ? (match.modelo || null) : null,
+            match.id,
+            asset.id
+          ]
+        );
+
+        return enriched;
+      });
+
+      callback(null, enrichedAssets);
+    }
+  );
+}
+
+function getDocumentationCategory(deviceType) {
+  const categories = {
+    printer: 'Impressoras',
+    network_device: 'Rede',
+    media_device: 'IoT / Multimídia',
+    server: 'Servidores',
+    workstation: 'Estações',
+    unknown: 'Ativos Não Classificados'
+  };
+  return categories[deviceType] || categories.unknown;
+}
+
+function getDocumentationTitle(asset) {
+  const typeLabel = {
+    printer: 'Impressora',
+    network_device: 'Ativo de Rede',
+    media_device: 'IoT / Multimídia',
+    server: 'Servidor',
+    workstation: 'Estação',
+    unknown: 'Ativo Não Classificado'
+  }[asset.device_type] || 'Ativo Não Classificado';
+
+  return `${typeLabel} - ${asset.hostname || asset.ip_address || asset.mac_address || `#${asset.id}`}`;
+}
+
+function buildDocumentationContent(asset) {
+  const ports = Array.isArray(asset.open_ports) ? asset.open_ports.join(', ') : '';
+  return [
+    `Origem: Descoberta de Rede`,
+    `Status: Ativo`,
+    `Data de Importacao: ${new Date().toISOString()}`,
+    ``,
+    `IP: ${asset.ip_address || ''}`,
+    `MAC: ${asset.mac_address || ''}`,
+    `Hostname: ${asset.hostname || ''}`,
+    `Tipo: ${asset.device_type || 'unknown'}`,
+    `Fabricante: ${asset.vendor || ''}`,
+    `Modelo: ${asset.printer_model || ''}`,
+    `Portas: ${ports}`,
+    `Metodo de Deteccao: ${asset.detection_method || ''}`,
+    `Ultima vez visto: ${asset.last_seen || ''}`,
+    `Observacoes: ${asset.notes || ''}`
+  ].join('\n');
+}
+
+function getNetworkAssetById(clientId, assetId) {
+  return new Promise((resolve, reject) => {
+    db.get(
+      `SELECT * FROM network_discovered_assets WHERE client_id = ? AND id = ?`,
+      [clientId, assetId],
+      (err, row) => err ? reject(err) : resolve(row)
+    );
+  });
+}
+
+function findExistingDocumentation(asset) {
+  const conditions = [];
+  const params = [asset.client_id];
+
+  if (asset.ip_address) {
+    conditions.push('content LIKE ?');
+    params.push(`%IP: ${asset.ip_address}%`);
+  }
+  if (asset.mac_address) {
+    conditions.push('content LIKE ?');
+    params.push(`%MAC: ${asset.mac_address}%`);
+  }
+  if (asset.hostname) {
+    conditions.push('content LIKE ?');
+    params.push(`%Hostname: ${asset.hostname}%`);
+  }
+
+  if (!conditions.length) return Promise.resolve(null);
+
+  return new Promise((resolve, reject) => {
+    db.get(
+      `SELECT id FROM intranet_documents
+       WHERE client_id = ? AND (${conditions.join(' OR ')})
+       ORDER BY updated_at DESC, created_at DESC
+       LIMIT 1`,
+      params,
+      (err, row) => err ? reject(err) : resolve(row)
+    );
+  });
+}
+
+function updateNetworkAssetDocumentationStatus(assetId, status, refId) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      `UPDATE network_discovered_assets
+       SET documentation_status = ?, documentation_ref_id = ?, imported_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [status, refId || null, assetId],
+      function (err) {
+        if (err) reject(err);
+        else resolve(this);
+      }
+    );
+  });
+}
+
+function ignoreNetworkAsset(clientId, assetId) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      `UPDATE network_discovered_assets
+       SET documentation_status = 'ignored', imported_at = CURRENT_TIMESTAMP
+       WHERE client_id = ? AND id = ?`,
+      [clientId, assetId],
+      function (err) {
+        if (err) reject(err);
+        else resolve(this);
+      }
+    );
+  });
+}
+
+async function importNetworkAssetToDocumentation(clientId, assetId, userId) {
+  const rawAsset = await getNetworkAssetById(clientId, assetId);
+  if (!rawAsset) {
+    const error = new Error('Ativo descoberto nao encontrado.');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  let openPorts = [];
+  try {
+    openPorts = rawAsset.open_ports ? JSON.parse(rawAsset.open_ports) : [];
+  } catch {
+    openPorts = [];
+  }
+
+  const classified = classifyNetworkAsset({ ...rawAsset, open_ports: openPorts });
+  const asset = {
+    ...rawAsset,
+    device_type: classified.device_type,
+    printer_model: classified.printer_model,
+    open_ports: classified.open_ports
+  };
+
+  const title = getDocumentationTitle(asset);
+  const category = getDocumentationCategory(asset.device_type);
+  const content = buildDocumentationContent(asset);
+  const existing = await findExistingDocumentation(asset);
+
+  if (existing) {
+    const result = await new Promise((resolve, reject) => {
+      db.run(
+        `UPDATE intranet_documents
+         SET title = ?, category = ?, content = ?, visibility = 'base_cliente',
+             updated_by = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [title, category, content, userId, existing.id],
+        function (err) {
+          if (err) reject(err);
+          else resolve(this);
+        }
+      );
+    });
+
+    await updateNetworkAssetDocumentationStatus(asset.id, 'updated', existing.id);
+    return { action: 'updated', document_id: existing.id, changes: result.changes };
+  }
+
+  const created = await new Promise((resolve, reject) => {
+    db.run(
+      `INSERT INTO intranet_documents
+       (client_id, title, category, content, visibility, created_by, updated_by)
+       VALUES (?, ?, ?, ?, 'base_cliente', ?, ?)`,
+      [clientId, title, category, content, userId, userId],
+      function (err) {
+        if (err) reject(err);
+        else resolve(this);
+      }
+    );
+  });
+
+  await updateNetworkAssetDocumentationStatus(asset.id, 'imported', created.lastID);
+  return { action: 'imported', document_id: created.lastID };
+}
+
+exports.importNetworkDiscoveredAsset = async (req, res) => {
+  const clientId = Number(req.params.id);
+  const assetId = Number(req.params.assetId);
+
+  if (!clientId || !assetId) {
+    return res.status(400).json({ message: 'Cliente ou ativo invalido.' });
+  }
+
+  ensureNetworkDiscoveredAssetsTable(async (tableErr) => {
+    if (tableErr) return res.status(500).json({ message: 'Falha ao preparar importacao.' });
+
+    try {
+      const result = await importNetworkAssetToDocumentation(clientId, assetId, req.userId);
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(error.statusCode || 500).json({ message: error.message || 'Falha ao importar ativo.' });
+    }
+  });
+};
+
+exports.importNetworkDiscoveredAssetsBulk = async (req, res) => {
+  const clientId = Number(req.params.id);
+  const assetIds = Array.isArray(req.body?.asset_ids) ? req.body.asset_ids.map(Number).filter(Boolean) : [];
+
+  if (!clientId || assetIds.length === 0) {
+    return res.status(400).json({ message: 'Selecione ao menos um ativo para importar.' });
+  }
+
+  ensureNetworkDiscoveredAssetsTable(async (tableErr) => {
+    if (tableErr) return res.status(500).json({ message: 'Falha ao preparar importacao.' });
+
+    const results = [];
+    for (const assetId of assetIds) {
+      try {
+        results.push({ asset_id: assetId, ...(await importNetworkAssetToDocumentation(clientId, assetId, req.userId)) });
+      } catch (error) {
+        results.push({ asset_id: assetId, error: error.message || 'Falha ao importar ativo.' });
+      }
+    }
+
+    res.json({ success: true, results });
+  });
+};
+
+exports.ignoreNetworkDiscoveredAsset = (req, res) => {
+  const clientId = Number(req.params.id);
+  const assetId = Number(req.params.assetId);
+
+  if (!clientId || !assetId) {
+    return res.status(400).json({ message: 'Cliente ou ativo invalido.' });
+  }
+
+  ensureNetworkDiscoveredAssetsTable(async (tableErr) => {
+    if (tableErr) return res.status(500).json({ message: 'Falha ao preparar atualizacao.' });
+
+    try {
+      const result = await ignoreNetworkAsset(clientId, assetId);
+      if (result.changes === 0) return res.status(404).json({ message: 'Ativo descoberto nao encontrado.' });
+      res.json({ success: true, documentation_status: 'ignored' });
+    } catch (error) {
+      res.status(500).json({ message: 'Falha ao ignorar ativo.' });
+    }
+  });
+};
+
 exports.getAgentPackage = (req, res) => {
   const { id } = req.params;
   const path = require('path');
@@ -149,6 +715,7 @@ exports.getAgentPackage = (req, res) => {
       const files = [
         'windows-inventory.ps1',
         'windows-performance.ps1',
+        'windows-network-discovery.ps1',
         'install-inventory-task.ps1',
         'install-performance-task.ps1'
       ];
@@ -156,7 +723,11 @@ exports.getAgentPackage = (req, res) => {
       files.forEach(fileName => {
         let content = fs.readFileSync(path.join(agentDir, fileName), 'utf8');
         
-        const endpoint = fileName.includes('inventory') ? 'inventory' : 'performance';
+        const endpoint = fileName.includes('network-discovery')
+          ? 'network-discovery'
+          : fileName.includes('inventory')
+            ? 'inventory'
+            : 'performance';
         
         // Substituições ultra-específicas para não quebrar a lógica interna dos scripts
         if (fileName.includes('windows-')) {
@@ -165,6 +736,7 @@ exports.getAgentPackage = (req, res) => {
           content = content.replace(/\$API_URL\s*=\s*['"][^'"]*['"]/, `$API_URL = "${apiUrl}/api/agent/${endpoint}"`);
           content = content.replace(/\$AgentToken\s*=\s*['"][^'"]*['"]/, `$AgentToken = "${agentToken}"`);
           content = content.replace(/\$AGENT_TOKEN\s*=\s*['"][^'"]*['"]/, `$AGENT_TOKEN = "${agentToken}"`);
+          content = content.replace(/\$ClientId\s*=\s*['"][^'"]*['"]/, `$ClientId = "${id}"`);
           content = content.replace(/\$Cliente\s*=\s*['"][^'"]*['"]/, `$Cliente = "${clientName}"`);
         }
         
@@ -251,20 +823,56 @@ echo ==========================================
 pause`;
       zip.addFile('instalar-agente.bat', Buffer.from(batContent, 'utf8'));
 
-      const readmeContent = `GOLDTECH INVENTÁRIO - AGENTE DE COLETA
+      const networkDiscoveryBatLines = [
+        '@echo off',
+        'chcp 65001 >nul',
+        'echo Iniciando descoberta de rede Goldtech...',
+        'echo.',
+        'echo Executando varredura...',
+        '',
+        `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0windows-network-discovery.ps1" -ApiUrl "${apiUrl}/api/agent/network-discovery" -AgentToken "${agentToken}" -ClientId "${id}" -Cliente "${clientName}"`,
+        '',
+        'if %ERRORLEVEL% NEQ 0 (',
+        '  echo.',
+        '  echo ERRO: Falha ao executar descoberta de rede.',
+        '  pause',
+        '  exit /b 1',
+        ')',
+        '',
+        'echo.',
+        'echo Descoberta de rede concluida com sucesso.',
+        'pause'
+      ];
+      const networkDiscoveryBatContent = networkDiscoveryBatLines.join('\r\n');
+      zip.addFile('executar-descoberta-rede.bat', Buffer.from(networkDiscoveryBatContent, 'utf8'));
 
-Instruções de Instalação:
+      const readmeContent = `GOLDTECH INVENTARIO - AGENTE DE COLETA
 
-1. Extraia todos os arquivos em uma pasta na máquina destino (ex: C:\\GoldtechAgent).
-2. Clique com o botão direito em "instalar-agente.bat" e selecione "Executar como Administrador".
-3. Aguarde a finalização dos processos.
+Instrucoes de instalacao:
+
+1. Extraia todos os arquivos em uma pasta na maquina destino (ex: C:\\GoldtechAgent).
+2. Clique com o botao direito em "instalar-agente.bat" e selecione "Executar como Administrador".
+3. Aguarde a finalizacao dos processos.
+
+Fluxo recomendado:
+- instalar-agente.bat instala e agenda as coletas de inventario e performance.
+- executar-descoberta-rede.bat roda manualmente a descoberta de ativos de rede.
+- A descoberta de rede nao e agendada automaticamente nesta versao.
+- Execute a descoberta em uma maquina fisica ou servidor conectado a rede do cliente.
+- Por padrao, o script ignora interfaces virtuais, Hyper-V, WSL, Docker, VPN e placas desconectadas.
+- Se necessario, o tecnico pode executar manualmente:
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows-network-discovery.ps1 -TargetSubnet "192.168.0.0/24"
+- Ou limitar por interface:
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows-network-discovery.ps1 -InterfaceAlias "Ethernet"
 
 Arquivos no pacote:
 - windows-inventory.ps1: Script de coleta de hardware e software.
 - windows-performance.ps1: Script de monitoramento de recursos (CPU/RAM/Disco).
+- windows-network-discovery.ps1: Script de descoberta manual de ativos de rede.
 - install-inventory-task.ps1: Configura a tarefa agendada semanal.
-- install-performance-task.ps1: Configura a tarefa agendada de monitoramento contínuo.
-- instalar-agente.bat: Automatiza a instalação completa.
+- install-performance-task.ps1: Configura a tarefa agendada de monitoramento continuo.
+- instalar-agente.bat: Automatiza a instalacao das coletas de inventario e performance.
+- executar-descoberta-rede.bat: Executa a varredura manual da rede local e envia os ativos encontrados para o Inventario.
 
 Suporte: contato@goldtech.com.br`;
       zip.addFile('README.txt', Buffer.from(readmeContent, 'utf8'));

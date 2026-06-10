@@ -45,7 +45,7 @@ export default function Sidebar() {
       display: 'flex',
       flexDirection: 'column',
       borderRight: '1px solid var(--border-glass)',
-      padding: '2rem 1.5rem',
+      padding: '0 1.5rem 2rem',
       position: 'fixed',
       left: 0,
       top: 0,

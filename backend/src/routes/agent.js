@@ -7,6 +7,7 @@ const { agentAuthMiddleware } = require('../middleware/agentAuth');
 router.get('/test', agentAuthMiddleware, agentController.test);
 router.post('/inventory', agentAuthMiddleware, agentController.collect);
 router.post('/performance', agentAuthMiddleware, agentController.collectPerformance);
+router.post('/network-discovery', agentAuthMiddleware, agentController.collectNetworkDiscovery);
 
 module.exports = router;
 

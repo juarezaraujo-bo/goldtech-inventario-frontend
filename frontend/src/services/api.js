@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002';
+const rawApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3002';
+export const API_URL = rawApiUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
 
 const api = axios.create({
   baseURL: `${API_URL}/api`,
@@ -8,7 +9,8 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
+  const storedToken = localStorage.getItem('token');
+  const token = storedToken?.replace(/^"|"$/g, '').trim();
   
   // Validar se o token existe e não é uma string de erro comum
   const isInvalid = !token || 
@@ -17,10 +19,11 @@ api.interceptors.request.use((config) => {
                     token === '[object Object]';
 
   if (!isInvalid) {
+    config.headers = config.headers || {};
     config.headers.Authorization = `Bearer ${token}`;
   } else {
     // Se estiver no localStorage mas for inválido, limpa
-    if (token) localStorage.removeItem('token');
+    if (storedToken) localStorage.removeItem('token');
   }
   
   return config;

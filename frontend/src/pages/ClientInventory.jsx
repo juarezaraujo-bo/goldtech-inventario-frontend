@@ -9,6 +9,7 @@ import {
 import toast from 'react-hot-toast';
 import AssetDetailsModal from '../components/AssetDetailsModal';
 import SecurityDiagnosticPanel from '../components/SecurityDiagnosticPanel';
+import DiscoveredAssetsPanel from '../components/DiscoveredAssetsPanel';
 import { isAdminRole } from '../utils/roles';
 
 export default function ClientInventory() {
@@ -189,6 +190,25 @@ export default function ClientInventory() {
           <ShieldCheck size={16} />
           Diagnóstico de Segurança
         </button>
+        <button
+          onClick={() => setActiveTab('discovered')}
+          style={{
+            height: '42px',
+            padding: '0 1rem',
+            borderRadius: '12px',
+            border: activeTab === 'discovered' ? '1px solid var(--primary-gold)' : '1px solid transparent',
+            background: activeTab === 'discovered' ? 'rgba(212,175,55,0.1)' : 'transparent',
+            color: activeTab === 'discovered' ? 'var(--primary-gold)' : 'var(--text-light)',
+            cursor: 'pointer',
+            fontWeight: 800,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          <Network size={16} />
+          Ativos Descobertos
+        </button>
       </div>
 
       {activeTab === 'inventory' ? (
@@ -365,8 +385,10 @@ export default function ClientInventory() {
         onUpdate={fetchData}
       />
         </>
-      ) : (
+      ) : activeTab === 'security' ? (
         <SecurityDiagnosticPanel clientId={id} clientName={client?.name} />
+      ) : (
+        <DiscoveredAssetsPanel clientId={id} />
       )}
     </div>
   );
