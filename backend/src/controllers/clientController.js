@@ -1,4 +1,5 @@
 const { db } = require('../models/db');
+const { parse } = require('json2csv');
 const { classifyNetworkAsset } = require('../utils/networkAssetClassifier');
 
 function ensureNetworkDiscoveredAssetsTable(callback) {
@@ -689,6 +690,167 @@ exports.ignoreNetworkDiscoveredAsset = (req, res) => {
   });
 };
 
+
+const INVENTORY_EXPORT_FIELDS = [
+  'id', 'client_id', 'client_name', 'nome', 'categoria', 'categoria_manual', 'tipo', 'fabricante', 'modelo',
+  'numero_serie', 'patrimonio', 'usuario_responsavel', 'localizacao', 'setor', 'status', 'data_aquisicao',
+  'garantia', 'observacoes', 'sistema_operacional', 'processador', 'memoria_ram', 'armazenamento',
+  'disco_livre_gb', 'bios_versao', 'bios_data', 'placa_mae', 'data_instalacao_os', 'ultima_inicializacao',
+  'ip', 'mac', 'dominio', 'antivirus', 'ultima_coleta', 'origem_cadastro'
+];
+
+const NETWORK_ASSET_EXPORT_FIELDS = [
+  'id', 'client_id', 'ip_address', 'mac_address', 'hostname', 'vendor', 'device_type', 'printer_model',
+  'open_ports', 'detection_method', 'is_collector', 'collector_hostname', 'local_ip', 'interface_alias',
+  'already_in_inventory', 'equipment_id', 'documentation_status', 'documentation_ref_id', 'imported_at',
+  'first_seen', 'last_seen', 'status', 'notes'
+];
+
+function normalizeExportFormat(format) {
+  const normalized = String(format || '').toLowerCase();
+  return ['csv', 'json'].includes(normalized) ? normalized : null;
+}
+
+function sanitizeFilenamePart(value) {
+  return String(value || 'cliente')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase() || 'cliente';
+}
+
+function sendJsonDownload(res, filename, payload) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(JSON.stringify(payload, null, 2));
+}
+
+function sendCsvDownload(res, filename, rows, fields) {
+  const csv = parse(rows || [], fields ? { fields } : undefined);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(csv);
+}
+
+function findClientForExport(clientId, callback) {
+  db.get('SELECT id, name, cnpj, status FROM clients WHERE id = ?', [clientId], (err, client) => {
+    if (err) return callback(err);
+    if (!client) {
+      const notFound = new Error('Cliente nao encontrado.');
+      notFound.statusCode = 404;
+      return callback(notFound);
+    }
+    callback(null, client);
+  });
+}
+
+function exportRowsByClient(req, res, options) {
+  const clientId = Number(req.params.id);
+  const format = normalizeExportFormat(req.params.format || options.format);
+
+  if (!clientId) return res.status(400).json({ message: 'Cliente invalido.' });
+  if (!format || !options.allowedFormats.includes(format)) {
+    return res.status(400).json({ message: 'Formato de exportacao invalido.' });
+  }
+
+  findClientForExport(clientId, (clientErr, client) => {
+    if (clientErr) return res.status(clientErr.statusCode || 500).json({ message: clientErr.message });
+
+    const runQuery = () => {
+      db.all(options.query, [clientId], (err, rows = []) => {
+        if (err) return res.status(500).json({ message: 'Erro ao gerar exportacao.' });
+
+        try {
+          const preparedRows = options.mapRows ? options.mapRows(rows) : rows;
+          const suffix = `${sanitizeFilenamePart(client.name)}-${options.fileLabel}`;
+          if (format === 'json') {
+            return sendJsonDownload(res, `${suffix}.json`, {
+              exported_at: new Date().toISOString(),
+              client,
+              total: preparedRows.length,
+              data: preparedRows
+            });
+          }
+          return sendCsvDownload(res, `${suffix}.csv`, preparedRows, options.fields);
+        } catch (exportErr) {
+          console.error('[CLIENT-EXPORT] Falha ao preparar arquivo:', exportErr.message);
+          return res.status(500).json({ message: 'Erro ao preparar arquivo de exportacao.' });
+        }
+      });
+    };
+
+    if (options.ensureTable) return options.ensureTable((tableErr) => {
+      if (tableErr) return res.status(500).json({ message: 'Erro ao preparar dados para exportacao.' });
+      runQuery();
+    });
+
+    runQuery();
+  });
+}
+
+function parseOpenPortsForExport(rows) {
+  return rows.map((row) => {
+    let openPorts = [];
+    try {
+      openPorts = row.open_ports ? JSON.parse(row.open_ports) : [];
+    } catch {
+      openPorts = [];
+    }
+    return {
+      ...row,
+      open_ports: Array.isArray(openPorts) ? openPorts.join(', ') : ''
+    };
+  });
+}
+
+exports.exportInventory = (req, res) => {
+  exportRowsByClient(req, res, {
+    allowedFormats: ['csv', 'json'],
+    fileLabel: 'inventario',
+    fields: INVENTORY_EXPORT_FIELDS,
+    query: `
+      SELECT e.*, c.name AS client_name
+      FROM equipments e
+      JOIN clients c ON c.id = e.client_id
+      WHERE e.client_id = ?
+      ORDER BY e.nome ASC, e.id ASC
+    `
+  });
+};
+
+exports.exportNetworkDiscoveredAssets = (req, res) => {
+  exportRowsByClient(req, res, {
+    allowedFormats: ['csv', 'json'],
+    fileLabel: 'ativos-descobertos',
+    fields: NETWORK_ASSET_EXPORT_FIELDS,
+    ensureTable: ensureNetworkDiscoveredAssetsTable,
+    mapRows: parseOpenPortsForExport,
+    query: `
+      SELECT *
+      FROM network_discovered_assets
+      WHERE client_id = ?
+      ORDER BY datetime(last_seen) DESC, ip_address ASC
+    `
+  });
+};
+
+exports.exportDocumentation = (req, res) => {
+  exportRowsByClient(req, res, {
+    allowedFormats: ['json'],
+    format: 'json',
+    fileLabel: 'documentacao-tecnica',
+    query: `
+      SELECT d.*, c.name AS client_name, creator.name AS created_by_name, updater.name AS updated_by_name
+      FROM intranet_documents d
+      JOIN clients c ON c.id = d.client_id
+      LEFT JOIN users creator ON creator.id = d.created_by
+      LEFT JOIN users updater ON updater.id = d.updated_by
+      WHERE d.client_id = ?
+      ORDER BY d.updated_at DESC, d.created_at DESC
+    `
+  });
+};
 exports.getAgentPackage = (req, res) => {
   const { id } = req.params;
   const path = require('path');

@@ -344,4 +344,4 @@ const initDb = async () => {
   console.log('Database initialized.');
 };
 
-module.exports = { db, initDb };
+module.exports = { db, dbPath, initDb };

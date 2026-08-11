@@ -7,6 +7,9 @@ router.use(authMiddleware);
 
 router.get('/', clientController.getAll);
 router.get('/:id/stats', clientController.getInventoryStats);
+router.get('/:id/export/inventory/:format', clientController.exportInventory);
+router.get('/:id/export/network-assets/:format', clientController.exportNetworkDiscoveredAssets);
+router.get('/:id/export/documentation/json', clientController.exportDocumentation);
 router.get('/:id/network-discovered-assets', clientController.getNetworkDiscoveredAssets);
 router.post('/:id/network-discovered-assets/import-bulk', clientController.importNetworkDiscoveredAssetsBulk);
 router.post('/:id/network-discovered-assets/:assetId/import', clientController.importNetworkDiscoveredAsset);

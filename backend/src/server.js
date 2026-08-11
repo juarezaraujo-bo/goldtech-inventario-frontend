@@ -14,6 +14,7 @@ const agentRoutes = require('./routes/agent');
 const intranetRoutes = require('./routes/intranet');
 const knowledgeRoutes = require('./routes/knowledge');
 const securityDiagnosticRoutes = require('./routes/securityDiagnosticRoutes');
+const adminBackupRoutes = require('./routes/adminBackup');
 
 const app = express();
 
@@ -37,6 +38,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/agent', agentRoutes);
 app.use('/api/intranet', intranetRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
+app.use('/api/admin', adminBackupRoutes);
 app.use('/api', securityDiagnosticRoutes);
 
 app.use((req, res) => {

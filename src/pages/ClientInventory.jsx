@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api, { API_URL } from '../services/api';
+import api from '../services/api';
 import { 
   Package, Search, Plus, Download, Edit2, Trash2, 
   ChevronLeft, LayoutGrid, Monitor, Laptop, Server, Router, 
-  Network, Box, Activity, Clock, AlertTriangle, ExternalLink
+  Network, Box, Activity, Clock, AlertTriangle, ExternalLink, FileText, Database
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import AssetDetailsModal from '../components/AssetDetailsModal';
@@ -84,10 +84,31 @@ export default function ClientInventory() {
     }
   };
 
-  const handleExport = () => {
-    const token = localStorage.getItem('token');
-    window.open(`${API_URL}/api/reports/export-csv?client_id=${id}&token=${token}`, '_blank');
+  const downloadClientExport = async (path, fileName) => {
+    const toastId = toast.loading('Preparando exportacao...');
+    try {
+      const response = await api.get(path, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Exportacao gerada com sucesso', { id: toastId });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Erro ao gerar exportacao', { id: toastId });
+    }
   };
+
+  const exportOptions = [
+    { label: 'Inventario CSV', icon: Download, path: `/clients/${id}/export/inventory/csv`, file: 'inventario.csv' },
+    { label: 'Inventario JSON', icon: FileText, path: `/clients/${id}/export/inventory/json`, file: 'inventario.json' },
+    { label: 'Ativos CSV', icon: Download, path: `/clients/${id}/export/network-assets/csv`, file: 'ativos-descobertos.csv' },
+    { label: 'Ativos JSON', icon: FileText, path: `/clients/${id}/export/network-assets/json`, file: 'ativos-descobertos.json' },
+    { label: 'Docs JSON', icon: Database, path: `/clients/${id}/export/documentation/json`, file: 'documentacao-tecnica.json' }
+  ];
 
   const handleDownloadAgent = async () => {
     const toastId = toast.loading(`Gerando agente para ${client.name}...`);
@@ -135,9 +156,19 @@ export default function ClientInventory() {
           <button onClick={handleDownloadAgent} className="btn-outline-premium" style={{ height: '42px', padding: '0 1rem', borderColor: 'var(--primary-gold)', color: 'var(--primary-gold)' }}>
             <Download size={16} /> Gerar Agente
           </button>
-          <button onClick={handleExport} className="btn-outline-premium" style={{ height: '42px', padding: '0 1rem' }}>
-            <Download size={16} /> Exportar
-          </button>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {exportOptions.map((option) => (
+              <button
+                key={option.path}
+                onClick={() => downloadClientExport(option.path, option.file)}
+                className="btn-outline-premium"
+                style={{ height: '42px', padding: '0 0.75rem', fontSize: '0.75rem' }}
+                title={option.label}
+              >
+                <option.icon size={15} /> {option.label}
+              </button>
+            ))}
+          </div>
           <button onClick={() => navigate(`/novo?client_id=${id}`)} className="btn-premium" style={{ height: '42px', padding: '0 1rem' }}>
             <Plus size={16} strokeWidth={3} /> Novo Ativo
           </button>
