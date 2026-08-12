@@ -28,11 +28,27 @@ try {
         $MAC = $NetAdapter.MacAddress
     }
 
+    $AVNames = "Não identificado / SecurityCenter2 indisponível"
     try {
-        $AV = Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct
-        $AVNames = ($AV.displayName) -join ", "
+        $SecurityCenterNamespace = Get-CimInstance -Namespace root -ClassName __Namespace -ErrorAction Stop |
+            Where-Object { $_.Name -eq "SecurityCenter2" }
+
+        if ($SecurityCenterNamespace) {
+            $AV = Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop
+            if ($AV) {
+                $DetectedAVNames = @($AV | Where-Object { $_.displayName } | ForEach-Object { $_.displayName })
+                if ($DetectedAVNames.Count -gt 0) {
+                    $AVNames = $DetectedAVNames -join ", "
+                } else {
+                    $AVNames = "Não identificado"
+                }
+            } else {
+                $AVNames = "Não identificado"
+            }
+        }
     } catch {
-        $AVNames = "Nao detectado"
+        $AVNames = "Não identificado / SecurityCenter2 indisponível"
+        Write-Verbose "Coleta de antivirus indisponivel: $($_.Exception.Message)"
     }
 
     $InventoryData = @{
